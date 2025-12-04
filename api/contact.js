@@ -75,7 +75,7 @@ module.exports = async (req, res) => {
         </div>
 
         <h2 style="color: #6C3EF8; margin-bottom: 16px;">
-          🚀 New Lead from Sitrixx Website
+          🚀 New Website Inquiry
         </h2>
 
         <p style="font-size: 15px; color: #444; margin-bottom: 20px;">
@@ -116,11 +116,8 @@ module.exports = async (req, res) => {
     const result = await resend.emails.send({
       from: "Leads <leads@sitrixx.com>",
       to: toEmail,
-
-      // 🔑 THIS WAS THE BUG: must be `replyTo`, not `reply_to`
       replyTo: email,
-
-      subject: `New lead from ${clientKey} website`,
+      subject: `Website Inquiry — Start Your Digital Journey`,
       html,
     });
 
