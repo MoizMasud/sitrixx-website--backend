@@ -1,7 +1,3 @@
-const { Resend } = require("resend");
-
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 const CLIENT_EMAILS = {
   sitrixx: "sitrixx1@gmail.com",
   moizkhan: "moizkhan_007@hotmail.com",
@@ -10,17 +6,17 @@ const CLIENT_EMAILS = {
 
 module.exports = async (req, res) => {
   // --- CORS headers ---
-  res.setHeader("Access-Control-Allow-Origin", "*"); // later we can lock to your domain
+  res.setHeader("Access-Control-Allow-Origin", "*"); // You can lock this down later
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
 
-  // 1) Handle CORS preflight
+  // 1) Handle preflight
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
-  // 2) Simple GET check in the browser
+  // 2) Simple GET health check
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
@@ -28,13 +24,13 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 3) Only allow POST for sending emails
+  // 3) Only allow POST to send email
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    // Lazy-load Resend *only when needed* (POST)
+    // Load Resend only when needed
     const { Resend } = require("resend");
     const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -51,38 +47,86 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Name and email are required" });
     }
 
-    const subject = `New lead from ${clientKey} website`;
+    // --- HTML Email Template (PREMIUM STYLE) ---
     const html = `
-      <h2>New website lead</h2>
-      <p><strong>Client:</strong> ${clientKey}</p>
-      <p><strong>Name:</strong> ${name}</p>
-      <p><strong>Email:</strong> ${email}</p>
-      ${phone ? `<p><strong>Phone:</strong> ${phone}</p>` : ""}
-      ${service ? `<p><strong>Service:</strong> ${service}</p>` : ""}
-      <p><strong>Message:</strong></p>
-      <p>${(message || "").replace(/\n/g, "<br>")}</p>
+      <div style="
+        font-family: Arial, sans-serif;
+        max-width: 520px;
+        margin: 0 auto;
+        padding: 20px;
+        background: #ffffff;
+        border-radius: 12px;
+        border: 1px solid #e5e7eb;
+      ">
+
+        <!-- Logo -->
+        <div style="text-align:center; margin-bottom:20px;">
+          <img src="https://sitrixx-website-assets.vercel.app/logo-purple.png"
+               width="120"
+               style="border-radius:6px;" />
+        </div>
+
+        <h2 style="color: #6C3EF8; margin-bottom: 16px;">
+          🚀 New Lead from Sitrixx Website
+        </h2>
+
+        <p style="font-size: 15px; color: #444; margin-bottom: 20px;">
+          A new visitor contacted you through your site. Here are the details:
+        </p>
+
+        <div style="
+          background: #f9f9ff;
+          padding: 16px;
+          border-radius: 10px;
+          border: 1px solid #ececff;
+        ">
+          <p><strong>Client:</strong> ${clientKey}</p>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> 
+            <a href="mailto:${email}" style="color:#6C3EF8;">${email}</a>
+          </p>
+          <p><strong>Phone:</strong> ${phone || "Not provided"}</p>
+          <p><strong>Service:</strong> ${service || "Not specified"}</p>
+
+          <p><strong>Message:</strong></p>
+          <p style="
+            white-space: pre-line;
+            margin-top: 6px;
+            border-left: 3px solid #6C3EF8;
+            padding-left: 10px;
+          ">
+            ${message}
+          </p>
+        </div>
+
+        <p style="margin-top: 25px; font-size: 13px; color: #777;">
+          Reply directly to this email to respond to the lead.
+        </p>
+      </div>
     `;
 
+    // --- SEND EMAIL ---
     const result = await resend.emails.send({
       from: "Leads <leads@sitrixx.com>",
       to: toEmail,
-      subject,
+      subject: `New lead from ${clientKey} website`,
       html,
     });
 
-    console.log("Resend email result:", JSON.stringify(result));
+    console.log("Resend result:", result);
 
-    // If Resend returns an error, surface it
-    if (result && result.error) {
+    if (result?.error) {
       return res.status(500).json({ ok: false, error: result.error });
     }
 
     return res.status(200).json({ ok: true, result });
 
-
-    return res.status(200).json({ ok: true });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to send email" });
+    console.error("Server error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to send email",
+      detail: err.message,
+    });
   }
 };
