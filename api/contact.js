@@ -112,12 +112,13 @@ module.exports = async (req, res) => {
     `;
 
     const result = await resend.emails.send({
-      from: "Leads <leads@sitrixx.com>",
+      from: "Leads <leads@sitrixx.com>",  // stays the same
       to: toEmail,
-      reply_to: email,
+      reply_to: `${name} <${email}>`,
       subject: `New lead from ${clientKey} website`,
       html,
     });
+
 
     console.log("Resend result:", result);
 
