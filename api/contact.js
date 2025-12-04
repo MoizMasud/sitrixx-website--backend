@@ -63,12 +63,22 @@ module.exports = async (req, res) => {
       <p>${(message || "").replace(/\n/g, "<br>")}</p>
     `;
 
-    await resend.emails.send({
+    const result = await resend.emails.send({
       from: "Leads <leads@sitrixx.com>",
       to: toEmail,
       subject,
       html,
     });
+
+    console.log("Resend email result:", JSON.stringify(result));
+
+    // If Resend returns an error, surface it
+    if (result && result.error) {
+      return res.status(500).json({ ok: false, error: result.error });
+    }
+
+    return res.status(200).json({ ok: true, result });
+
 
     return res.status(200).json({ ok: true });
   } catch (err) {
