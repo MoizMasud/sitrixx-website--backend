@@ -61,9 +61,11 @@ module.exports = async (req, res) => {
 
         <!-- Logo -->
         <div style="text-align:center; margin-bottom:20px;">
-          <img src="https://sitrixx-website-assets.vercel.app/logo-purple.png"
-               width="120"
-               style="border-radius:6px;" />
+       <img 
+          src="https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/favicon.svg"
+          width="120"
+          style="border-radius:6px;"
+        />
         </div>
 
         <h2 style="color: #6C3EF8; margin-bottom: 16px;">
