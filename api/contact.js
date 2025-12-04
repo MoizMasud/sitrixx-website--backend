@@ -4,17 +4,28 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Map client keys -> destination emails
 const CLIENT_EMAILS = {
-  "sitrixx": "sitrixx1@gmail.com",
-  "moizkhan": "moizkhan_007@hotmail.com",
+  sitrixx: "sitrixx1@gmail.com",
+  moizkhan: "moizkhan_007@hotmail.com",
   // add more clients here
 };
 
 module.exports = async (req, res) => {
+  // --- CORS headers (allow Webflow + your live domain to call this) ---
+  res.setHeader("Access-Control-Allow-Origin", "*"); // or restrict to specific domains
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
+
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
   // Allow a quick browser check with GET
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
-      message: "Contact endpoint is live. Use POST to send form data."
+      message: "Contact endpoint is live. Use POST to send form data.",
     });
   }
 
@@ -48,16 +59,3 @@ module.exports = async (req, res) => {
       <p>${(message || "").replace(/\n/g, "<br>")}</p>
     `;
 
-    await resend.emails.send({
-      from: "Leads <leads@sitrixx.com>",   // domain is verified in your screenshot 👍
-      to: toEmail,
-      subject,
-      html
-    });
-
-    return res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to send email" });
-  }
-};
