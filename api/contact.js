@@ -50,11 +50,10 @@ module.exports = async (req, res) => {
         .json({ ok: false, error: "Name and email are required" });
     }
 
-    // 👉 Use a PNG/JPG logo URL (not SVG) – e.g. from GitHub raw or Webflow CDN
+    // PNG/JPG logo URL (from GitHub raw, Webflow, etc.)
     const LOGO_URL =
-      "https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/logo.png";
+      "https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/favicon.png";
 
-    // --- Pretty HTML template ---
     const html = `
       <div style="
         font-family: Arial, sans-serif;
@@ -66,7 +65,6 @@ module.exports = async (req, res) => {
         border: 1px solid #e5e7eb;
       ">
 
-        <!-- Logo -->
         <div style="text-align:center; margin-bottom:20px;">
           <img 
             src="${LOGO_URL}"
@@ -109,19 +107,18 @@ module.exports = async (req, res) => {
           </p>
         </div>
 
-        <p style="margin-top: 20px; font-size: 13px; color: #777;">
+        <p style="margin-top: 25px; font-size: 13px; color: #777;">
           Hit reply to respond directly to this lead.
         </p>
       </div>
     `;
 
     const result = await resend.emails.send({
-      // MUST be a verified domain in Resend:
       from: "Leads <leads@sitrixx.com>",
       to: toEmail,
 
-      // 👇 This is the client's email – replies should go to them
-      reply_to: `${name} <${email}>`,
+      // 🔑 THIS WAS THE BUG: must be `replyTo`, not `reply_to`
+      replyTo: email,
 
       subject: `New lead from ${clientKey} website`,
       html,
@@ -143,4 +140,5 @@ module.exports = async (req, res) => {
     });
   }
 };
+
 
