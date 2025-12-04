@@ -6,17 +6,17 @@ const CLIENT_EMAILS = {
 
 module.exports = async (req, res) => {
   // --- CORS headers ---
-  res.setHeader("Access-Control-Allow-Origin", "*"); // You can lock this down later
+  res.setHeader("Access-Control-Allow-Origin", "*"); // you can restrict later
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
 
-  // 1) Handle preflight
+  // 1) CORS preflight
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
-  // 2) Simple GET health check
+  // 2) Simple health check
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
@@ -24,13 +24,12 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 3) Only allow POST to send email
+  // 3) Only POST is allowed for sending
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
   try {
-    // Load Resend only when needed
     const { Resend } = require("resend");
     const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -38,16 +37,20 @@ module.exports = async (req, res) => {
     const toEmail = CLIENT_EMAILS[clientKey];
 
     if (!toEmail) {
-      return res.status(400).json({ error: "Unknown client" });
+      return res.status(400).json({ ok: false, error: "Unknown client" });
     }
 
     const { name, email, phone, message, service } = req.body || {};
 
     if (!email || !name) {
-      return res.status(400).json({ error: "Name and email are required" });
+      return res
+        .status(400)
+        .json({ ok: false, error: "Name and email are required" });
     }
 
-    // --- HTML Email Template (PREMIUM STYLE) ---
+    const LOGO_URL =
+      "https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/favicon.png";
+
     const html = `
       <div style="
         font-family: Arial, sans-serif;
@@ -61,11 +64,12 @@ module.exports = async (req, res) => {
 
         <!-- Logo -->
         <div style="text-align:center; margin-bottom:20px;">
-       <img 
-          src="https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/favicon.svg"
-          width="120"
-          style="border-radius:6px;"
-        />
+          <img 
+            src="${LOGO_URL}"
+            alt="Sitrixx"
+            width="120"
+            style="border-radius:6px; display:block; margin:0 auto;"
+          />
         </div>
 
         <h2 style="color: #6C3EF8; margin-bottom: 16px;">
@@ -97,20 +101,20 @@ module.exports = async (req, res) => {
             border-left: 3px solid #6C3EF8;
             padding-left: 10px;
           ">
-            ${message}
+            ${message || ""}
           </p>
         </div>
 
         <p style="margin-top: 25px; font-size: 13px; color: #777;">
-          Reply directly to this email to respond to the lead.
+          Hit reply to respond directly to this lead.
         </p>
       </div>
     `;
 
-    // --- SEND EMAIL ---
     const result = await resend.emails.send({
       from: "Leads <leads@sitrixx.com>",
       to: toEmail,
+      reply_to: email,
       subject: `New lead from ${clientKey} website`,
       html,
     });
@@ -122,7 +126,6 @@ module.exports = async (req, res) => {
     }
 
     return res.status(200).json({ ok: true, result });
-
   } catch (err) {
     console.error("Server error:", err);
     return res.status(500).json({
