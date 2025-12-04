@@ -1,22 +1,25 @@
+// api/contact.js
+
+// Map client keys -> destination inboxes
 const CLIENT_EMAILS = {
   sitrixx: "sitrixx1@gmail.com",
   moizkhan: "moizkhan_007@hotmail.com",
-  // add more clients here
+  // add more clients here as you onboard them
 };
 
 module.exports = async (req, res) => {
-  // --- CORS headers ---
-  res.setHeader("Access-Control-Allow-Origin", "*"); // you can restrict later
+  // --- CORS headers (for Webflow, etc.) ---
+  res.setHeader("Access-Control-Allow-Origin", "*"); // you can lock this later
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Max-Age", "86400");
 
-  // 1) CORS preflight
+  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
 
-  // 2) Simple health check
+  // Simple health check
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
@@ -24,7 +27,6 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 3) Only POST is allowed for sending
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
@@ -42,15 +44,17 @@ module.exports = async (req, res) => {
 
     const { name, email, phone, message, service } = req.body || {};
 
-    if (!email || !name) {
+    if (!name || !email) {
       return res
         .status(400)
         .json({ ok: false, error: "Name and email are required" });
     }
 
+    // 👉 Use a PNG/JPG logo URL (not SVG) – e.g. from GitHub raw or Webflow CDN
     const LOGO_URL =
-      "https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/favicon.png";
+      "https://raw.githubusercontent.com/MoizMasud/sitrixx-website/main/public/logo.png";
 
+    // --- Pretty HTML template ---
     const html = `
       <div style="
         font-family: Arial, sans-serif;
@@ -105,20 +109,23 @@ module.exports = async (req, res) => {
           </p>
         </div>
 
-        <p style="margin-top: 25px; font-size: 13px; color: #777;">
+        <p style="margin-top: 20px; font-size: 13px; color: #777;">
           Hit reply to respond directly to this lead.
         </p>
       </div>
     `;
 
     const result = await resend.emails.send({
-      from: "Leads <leads@sitrixx.com>",  // stays the same
+      // MUST be a verified domain in Resend:
+      from: "Leads <leads@sitrixx.com>",
       to: toEmail,
+
+      // 👇 This is the client's email – replies should go to them
       reply_to: `${name} <${email}>`,
+
       subject: `New lead from ${clientKey} website`,
       html,
     });
-
 
     console.log("Resend result:", result);
 
@@ -136,3 +143,4 @@ module.exports = async (req, res) => {
     });
   }
 };
+
