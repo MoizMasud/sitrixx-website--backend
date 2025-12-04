@@ -1,14 +1,23 @@
-import { Resend } from "resend";
+const { Resend } = require("resend");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Map client keys -> destination emails
 const CLIENT_EMAILS = {
   "sitrixx": "sitrixx1@gmail.com",
+  "moizkhan": "moizkhan_007@hotmail.com",
   // add more clients here
 };
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
+  // Allow a quick browser check with GET
+  if (req.method === "GET") {
+    return res.status(200).json({
+      ok: true,
+      message: "Contact endpoint is live. Use POST to send form data."
+    });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -40,7 +49,7 @@ export default async function handler(req, res) {
     `;
 
     await resend.emails.send({
-      from: "Leads <leads@sitrixx.com>", // or your verified domain
+      from: "Leads <leads@sitrixx.com>",   // domain is verified in your screenshot 👍
       to: toEmail,
       subject,
       html
@@ -51,4 +60,4 @@ export default async function handler(req, res) {
     console.error(err);
     return res.status(500).json({ error: "Failed to send email" });
   }
-}
+};
