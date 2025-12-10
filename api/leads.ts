@@ -52,17 +52,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const bizName = client.business_name || 'our team';
       const bookingLink = client.booking_link || '';
 
-      let smsBody = `Hey${name ? ` ${name}` : ''}, thanks for reaching out to ${bizName}.`;
+      // Build SMS body using custom template OR fallback
+      const template =
+        client.custom_sms_template ||
+        'Hey {name}, thanks for contacting {business}. You can book here: {booking}';
 
-      if (bookingLink) {
-        smsBody += ` You can book a time here: ${bookingLink}`;
-      } else {
-        smsBody += ` We'll get back to you shortly.`;
-      }
+      const smsBody = template
+        .replace('{name}', name || '')
+        .replace('{business}', bizName)
+        .replace('{booking}', bookingLink);
+
+      // Use per-client Twilio number if set, otherwise fallback to env default
+      const fromNumber = client.twilio_number || TWILIO_FROM_NUMBER;
 
       try {
         await twilioClient.messages.create({
-          from: TWILIO_FROM_NUMBER,
+          from: fromNumber,
           to: phone,
           body: smsBody,
         });
