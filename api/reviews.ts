@@ -1,15 +1,30 @@
-// api/reviews.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { resendClient } from '../resendClient';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method === 'GET') {
+    const clientId = req.query.clientId as string | undefined;
+
+    if (!clientId) {
+      return res.status(400).json({ error: 'clientId query param is required' });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('reviews')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching reviews:', error);
+      return res.status(500).json({ error: 'Failed to fetch reviews' });
+    }
+
+    return res.status(200).json({ ok: true, reviews: data });
   }
 
-  try {
+  if (req.method === 'POST') {
     const { clientId, name, rating, comments } = (req.body as any) || {};
 
     if (!clientId || typeof rating !== 'number') {
@@ -18,7 +33,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .json({ error: 'clientId and numeric rating are required' });
     }
 
-    // Look up client config (we need Google review link + owner email)
     const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('*')
@@ -30,7 +44,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Invalid clientId' });
     }
 
-    // Save review internally
     const { data: review, error } = await supabaseAdmin
       .from('reviews')
       .insert({
@@ -49,8 +62,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const googleReviewLink = client.google_review_link || null;
 
-    // If rating is 5★ (or 4–5, your choice) → send them to Google
-    // If rating is <= 4 → send private email to owner with feedback
     if (rating <= 4 && resendClient && client.owner_email) {
       try {
         await resendClient.emails.send({
@@ -69,21 +80,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       } catch (emailError) {
         console.error('Error sending review email:', emailError);
-        // don't fail the whole request if email fails
       }
     }
 
-    // Response for the frontend:
-    // - if rating >= 5, we return the Google link so UI can show "Leave a Google review" button
-    // - if rating <= 4, we do NOT push them to Google
     return res.status(201).json({
       ok: true,
       review,
       googleReviewLink: rating >= 5 ? googleReviewLink : null,
     });
-  } catch (err) {
-    console.error('Invalid JSON body:', err);
-    return res.status(400).json({ error: 'Invalid JSON body' });
   }
+
+  res.setHeader('Allow', 'GET, POST');
+  return res.status(405).json({ error: 'Method Not Allowed' });
 }
+
 
