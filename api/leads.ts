@@ -1,14 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
+import { applyCors } from './_cors';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // -----------------------------
+  // CORS + OPTIONS handling
+  // -----------------------------
+  if (applyCors(req, res)) return;
+
+  // -----------------------------
+  // GET /api/leads?clientId=xxx
+  // -----------------------------
   if (req.method === 'GET') {
-    // GET /api/leads?clientId=moiz-test
     const clientId = req.query.clientId as string | undefined;
 
     if (!clientId) {
-      return res.status(400).json({ error: 'clientId query param is required' });
+      return res.status(400).json({ ok: false, error: 'clientId query param is required' });
     }
 
     const { data, error } = await supabaseAdmin
@@ -19,17 +27,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error fetching leads:', error);
-      return res.status(500).json({ error: 'Failed to fetch leads' });
+      return res.status(500).json({ ok: false, error: 'Failed to fetch leads' });
     }
 
     return res.status(200).json({ ok: true, leads: data });
   }
 
+  // -----------------------------
+  // POST /api/leads
+  // -----------------------------
   if (req.method === 'POST') {
     const { clientId, name, phone, email, message, source } = (req.body as any) || {};
 
     if (!clientId) {
-      return res.status(400).json({ error: 'clientId is required' });
+      return res.status(400).json({ ok: false, error: 'clientId is required' });
     }
 
     // Make sure the client exists
@@ -41,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (clientError || !client) {
       console.error('Invalid clientId:', clientError);
-      return res.status(400).json({ error: 'Invalid clientId' });
+      return res.status(400).json({ ok: false, error: 'Invalid clientId' });
     }
 
     // Save the lead
@@ -60,13 +71,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error inserting lead:', error);
-      return res.status(500).json({ error: 'Failed to create lead' });
+      return res.status(500).json({ ok: false, error: 'Failed to create lead' });
     }
 
-    // 🔔 Try to send SMS if we have a phone number
+    // -----------------------------------
+    // Try to send SMS notification
+    // -----------------------------------
     if (phone) {
       const bizName = client.business_name || 'our team';
-      const bookingLink = client.booking_link || '';
 
       const template =
         client.custom_sms_template ||
@@ -75,7 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const smsBody = template
         .replace('{name}', name || '')
         .replace('{business}', bizName)
-        .replace('{booking}', bookingLink);
+        .replace('{booking}', client.booking_link || '');
 
       const fromNumber = client.twilio_number || TWILIO_FROM_NUMBER;
 
@@ -93,7 +105,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(201).json({ ok: true, lead });
   }
 
+  // Unsupported method
   res.setHeader('Allow', 'GET, POST');
-  return res.status(405).json({ error: 'Method Not Allowed' });
+  return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
