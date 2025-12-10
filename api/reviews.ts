@@ -1,13 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { resendClient } from '../resendClient';
+import { applyCors } from './_cors';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // ----------------------------------
+  // CORS + OPTIONS handling
+  // ----------------------------------
+  if (applyCors(req, res)) return;
+
+  // ----------------------------------
+  // GET /api/reviews?clientId=xxx
+  // ----------------------------------
   if (req.method === 'GET') {
     const clientId = req.query.clientId as string | undefined;
 
     if (!clientId) {
-      return res.status(400).json({ error: 'clientId query param is required' });
+      return res.status(400).json({ ok: false, error: 'clientId query param is required' });
     }
 
     const { data, error } = await supabaseAdmin
@@ -18,21 +27,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error fetching reviews:', error);
-      return res.status(500).json({ error: 'Failed to fetch reviews' });
+      return res.status(500).json({ ok: false, error: 'Failed to fetch reviews' });
     }
 
     return res.status(200).json({ ok: true, reviews: data });
   }
 
+  // ----------------------------------
+  // POST /api/reviews
+  // ----------------------------------
   if (req.method === 'POST') {
     const { clientId, name, rating, comments } = (req.body as any) || {};
 
     if (!clientId || typeof rating !== 'number') {
-      return res
-        .status(400)
-        .json({ error: 'clientId and numeric rating are required' });
+      return res.status(400).json({
+        ok: false,
+        error: 'clientId and numeric rating are required'
+      });
     }
 
+    // Validate client
     const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('*')
@@ -41,9 +55,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (clientError || !client) {
       console.error('Invalid clientId:', clientError);
-      return res.status(400).json({ error: 'Invalid clientId' });
+      return res.status(400).json({ ok: false, error: 'Invalid clientId' });
     }
 
+    // Insert review
     const { data: review, error } = await supabaseAdmin
       .from('reviews')
       .insert({
@@ -57,11 +72,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error inserting review:', error);
-      return res.status(500).json({ error: 'Failed to save review' });
+      return res.status(500).json({ ok: false, error: 'Failed to save review' });
     }
 
     const googleReviewLink = client.google_review_link || null;
 
+    // Email business owner for low review (<=4)
     if (rating <= 4 && resendClient && client.owner_email) {
       try {
         await resendClient.emails.send({
@@ -75,11 +91,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             <p><b>Comments:</b></p>
             <p>${comments || '(no comments provided)'}</p>
             <hr />
-            <p>This review was captured privately by your Sitrixx system so you can improve the experience before it impacts your public rating.</p>
+            <p>This review was captured privately by your Sitrixx system so you can improve before it impacts your public rating.</p>
           `,
         });
       } catch (emailError) {
-        console.error('Error sending review email:', emailError);
+        console.error('Error sending low-review email:', emailError);
       }
     }
 
@@ -90,8 +106,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // Unsupported method
   res.setHeader('Allow', 'GET, POST');
-  return res.status(405).json({ error: 'Method Not Allowed' });
+  return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
 
