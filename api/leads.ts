@@ -1,15 +1,31 @@
-// api/leads.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method === 'GET') {
+    // GET /api/leads?clientId=moiz-test
+    const clientId = req.query.clientId as string | undefined;
+
+    if (!clientId) {
+      return res.status(400).json({ error: 'clientId query param is required' });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching leads:', error);
+      return res.status(500).json({ error: 'Failed to fetch leads' });
+    }
+
+    return res.status(200).json({ ok: true, leads: data });
   }
 
-  try {
+  if (req.method === 'POST') {
     const { clientId, name, phone, email, message, source } = (req.body as any) || {};
 
     if (!clientId) {
@@ -52,7 +68,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const bizName = client.business_name || 'our team';
       const bookingLink = client.booking_link || '';
 
-      // Build SMS body using custom template OR fallback
       const template =
         client.custom_sms_template ||
         'Hey {name}, thanks for contacting {business}. You can book here: {booking}';
@@ -62,7 +77,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .replace('{business}', bizName)
         .replace('{booking}', bookingLink);
 
-      // Use per-client Twilio number if set, otherwise fallback to env default
       const fromNumber = client.twilio_number || TWILIO_FROM_NUMBER;
 
       try {
@@ -73,14 +87,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       } catch (smsError) {
         console.error('Error sending SMS:', smsError);
-        // Don't fail the whole request just because SMS failed
       }
     }
 
     return res.status(201).json({ ok: true, lead });
-  } catch (err) {
-    console.error('Invalid JSON body:', err);
-    return res.status(400).json({ error: 'Invalid JSON body' });
   }
+
+  res.setHeader('Allow', 'GET, POST');
+  return res.status(405).json({ error: 'Method Not Allowed' });
 }
 
