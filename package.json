@@ -2,6 +2,7 @@
   "name": "sitrixx-forms-api",
   "version": "1.0.0",
   "dependencies": {
+    "@supabase/supabase-js": "^2.87.1",
     "resend": "^4.0.0"
   }
 }
