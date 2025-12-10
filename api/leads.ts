@@ -1,6 +1,7 @@
 // api/leads.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
+import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -28,7 +29,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Save the lead
-    const { data, error } = await supabaseAdmin
+    const { data: lead, error } = await supabaseAdmin
       .from('leads')
       .insert({
         client_id: clientId,
@@ -46,11 +47,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(500).json({ error: 'Failed to create lead' });
     }
 
-    // 🔜 later: send SMS here with Twilio + email notification to owner
+    // 🔔 Try to send SMS if we have a phone number
+    if (phone) {
+      const bizName = client.business_name || 'our team';
+      const bookingLink = client.booking_link || '';
 
-    return res.status(201).json({ ok: true, lead: data });
+      // Build SMS body using custom template OR fallback
+      const template =
+        client.custom_sms_template ||
+        'Hey {name}, thanks for contacting {business}. You can book here: {booking}';
+
+      const smsBody = template
+        .replace('{name}', name || '')
+        .replace('{business}', bizName)
+        .replace('{booking}', bookingLink);
+
+      // Use per-client Twilio number if set, otherwise fallback to env default
+      const fromNumber = client.twilio_number || TWILIO_FROM_NUMBER;
+
+      try {
+        await twilioClient.messages.create({
+          from: fromNumber,
+          to: phone,
+          body: smsBody,
+        });
+      } catch (smsError) {
+        console.error('Error sending SMS:', smsError);
+        // Don't fail the whole request just because SMS failed
+      }
+    }
+
+    return res.status(201).json({ ok: true, lead });
   } catch (err) {
     console.error('Invalid JSON body:', err);
     return res.status(400).json({ error: 'Invalid JSON body' });
   }
 }
+
