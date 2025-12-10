@@ -1,18 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const allowedOrigin = '*'; 
-// later you can set this to your Webflow domain, e.g.
+const allowedOrigin = '*';
+// Later, change this to your real Webflow domain, e.g.
 // const allowedOrigin = 'https://sitrixx.webflow.io';
 
 export function applyCors(req: VercelRequest, res: VercelResponse): boolean {
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // If it's a preflight request, respond here and stop
+  // Echo back the requested headers if provided, otherwise allow common ones
+  const requestHeaders =
+    (req.headers['access-control-request-headers'] as string | undefined) ||
+    'Content-Type, Authorization, Accept, Origin, X-Requested-With';
+
+  res.setHeader('Access-Control-Allow-Headers', requestHeaders);
+
+  // Handle preflight
   if (req.method === 'OPTIONS') {
     res.status(200).end();
-    return true;
+    return true; // stop the handler
   }
 
   return false;
