@@ -1,9 +1,8 @@
-// api/clients.ts
+// /api/clients.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
 
-// /api/clients
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Always run CORS first
   if (applyCors(req, res)) return;
@@ -35,7 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // -------------------------
-  // POST /api/clients  (create)
+  // POST /api/clients (create)
   // -------------------------
   if (req.method === 'POST') {
     try {
@@ -49,6 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         twilio_number,
         forwarding_phone,
         custom_sms_template,
+        auto_review_enabled,
       } = (req.body as any) || {};
 
       if (!id || !business_name || !owner_email) {
@@ -70,6 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           twilio_number,
           forwarding_phone,
           custom_sms_template,
+          auto_review_enabled,
         })
         .select()
         .single();
@@ -91,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // -------------------------
-  // PUT /api/clients  (update)
+  // PUT/PATCH /api/clients (update)
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -104,18 +105,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .json({ ok: false, error: 'id is required to update a client' });
       }
 
-    const allowedFields = [
-      'business_name',
-      'website_url',
-      'booking_link',
-      'google_review_link',
-      'owner_email',
-      'twilio_number',
-      'forwarding_phone',
-      'custom_sms_template',
-      'auto_review_enabled',
-    ];
-
+      const allowedFields = [
+        'business_name',
+        'website_url',
+        'booking_link',
+        'google_review_link',
+        'owner_email',
+        'twilio_number',
+        'forwarding_phone',
+        'custom_sms_template',
+        'auto_review_enabled',
+      ] as const;
 
       const updates: Record<string, any> = {};
       for (const key of allowedFields) {
@@ -158,6 +158,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST, PUT, PATCH');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
 
 
