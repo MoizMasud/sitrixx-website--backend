@@ -3,19 +3,15 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
 import { applyCors } from './_cors';
-import { requireAuth } from './_auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS + OPTIONS
   if (applyCors(req, res)) return;
 
   // -----------------------------
-  // GET /api/leads?clientId=xxx  (ADMIN ONLY)
+  // GET /api/leads?clientId=xxx
   // -----------------------------
   if (req.method === 'GET') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-
     const clientId = req.query.clientId as string | undefined;
 
     if (!clientId) {
@@ -32,14 +28,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error fetching leads:', error);
-      return res.status(500).json({ ok: false, error: 'Failed to fetch leads' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to fetch leads' });
     }
 
     return res.status(200).json({ ok: true, leads: data });
   }
 
   // -----------------------------
-  // POST /api/leads  (PUBLIC – website forms)
+  // POST /api/leads  (public form)
   // -----------------------------
   if (req.method === 'POST') {
     const { clientId, name, phone, email, message, source } =
@@ -49,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ ok: false, error: 'clientId is required' });
     }
 
-    // Make sure the client exists
+    // Validate client
     const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('*')
@@ -77,15 +75,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error inserting lead:', error);
-      return res.status(500).json({ ok: false, error: 'Failed to create lead' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to create lead' });
     }
 
-    // -----------------------------------
     // Try to send SMS notification
-    // -----------------------------------
     if (phone) {
       const bizName = client.business_name || 'our team';
-
       const template =
         client.custom_sms_template ||
         'Hey {name}, thanks for contacting {business}. You can book here: {booking}';
@@ -111,8 +108,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(201).json({ ok: true, lead });
   }
 
-  // Unsupported method
   res.setHeader('Allow', 'GET, POST');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
