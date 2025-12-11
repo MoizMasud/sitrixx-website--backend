@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
 import { applyCors } from './_cors';
+import { requireAuth } from './_auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // -----------------------------
@@ -11,12 +12,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // -----------------------------
   // GET /api/leads?clientId=xxx
+  // admin-only (JWT required)
   // -----------------------------
   if (req.method === 'GET') {
+    const user = requireAuth(req, res);
+    if (!user) return; // 401 already sent
+
     const clientId = req.query.clientId as string | undefined;
 
     if (!clientId) {
-      return res.status(400).json({ ok: false, error: 'clientId query param is required' });
+      return res
+        .status(400)
+        .json({ ok: false, error: 'clientId query param is required' });
     }
 
     const { data, error } = await supabaseAdmin
@@ -34,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // -----------------------------
-  // POST /api/leads
+  // POST /api/leads  (public form)
   // -----------------------------
   if (req.method === 'POST') {
     const { clientId, name, phone, email, message, source } = (req.body as any) || {};
@@ -109,5 +116,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
-
-
