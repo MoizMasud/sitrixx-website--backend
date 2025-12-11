@@ -1,3 +1,4 @@
+// api/clients.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
@@ -8,14 +9,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS + preflight
   if (applyCors(req, res)) return;
 
-  // 🔐 all client operations require a valid admin JWT
+  // 🔐 Require JWT for ALL client operations
   const user = requireAuth(req, res);
-  if (!user) return; // 401 already sent
-
-  // (optional) enforce admin role from JWT:
-  // if (user.role !== 'admin') {
-  //   return res.status(403).json({ ok: false, error: 'Forbidden' });
-  // }
+  if (!user) return; // response already sent
 
   // -------------------------
   // GET /api/clients
@@ -29,13 +25,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error fetching clients:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to fetch clients' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to fetch clients' });
       }
 
       return res.status(200).json({ ok: true, clients: data });
     } catch (err) {
       console.error('Unexpected error fetching clients:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
@@ -81,18 +81,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error creating client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to create client' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to create client' });
       }
 
       return res.status(201).json({ ok: true, client: data });
     } catch (err) {
       console.error('Unexpected error creating client:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
   // -------------------------
-  // PUT/PATCH /api/clients  (update)
+  // PUT /api/clients  (update)
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -141,13 +145,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error updating client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to update client' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to update client' });
       }
 
       return res.status(200).json({ ok: true, client: data });
     } catch (err) {
       console.error('Unexpected error updating client:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
@@ -155,5 +163,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST, PUT, PATCH');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
 
