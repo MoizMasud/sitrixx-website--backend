@@ -3,6 +3,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
 
+// /api/clients
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Always run CORS first
   if (applyCors(req, res)) return;
@@ -47,7 +48,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         owner_email,
         twilio_number,
         forwarding_phone,
-        custom_sms_template,
+        custom_sms_template,  // missed-call template
+        review_sms_template,  // Google review template
         auto_review_enabled,
       } = (req.body as any) || {};
 
@@ -70,6 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           twilio_number,
           forwarding_phone,
           custom_sms_template,
+          review_sms_template,
           auto_review_enabled,
         })
         .select()
@@ -92,7 +95,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // -------------------------
-  // PUT/PATCH /api/clients (update)
+  // PUT /api/clients (update)
+  // PATCH /api/clients (partial update)
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -113,9 +117,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'owner_email',
         'twilio_number',
         'forwarding_phone',
-        'custom_sms_template',
+        'custom_sms_template',  // missed-call template
+        'review_sms_template',  // Google review template
         'auto_review_enabled',
-      ] as const;
+      ];
 
       const updates: Record<string, any> = {};
       for (const key of allowedFields) {
