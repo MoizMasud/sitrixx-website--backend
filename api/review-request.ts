@@ -8,6 +8,34 @@ const DEFAULT_REVIEW_TEMPLATE =
   'Hi {{name}}, thanks for choosing {{business_name}}! ' +
   'It would mean a lot if you could leave us a quick review here: {{review_link}}';
 
+// Normalize to E.164 for North America (default +1)
+const normalizePhone = (raw: string): string => {
+  if (!raw) return raw;
+
+  const trimmed = raw.trim();
+
+  // If user already gave us +..., trust it
+  if (trimmed.startsWith('+')) {
+    return trimmed;
+  }
+
+  // Strip everything that's not a digit
+  const digits = trimmed.replace(/\D/g, '');
+
+  // 10 digits -> assume North America -> +1XXXXXXXXXX
+  if (digits.length === 10) {
+    return `+1${digits}`;
+  }
+
+  // 11 digits starting with 1 -> +1XXXXXXXXXX
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+${digits}`;
+  }
+
+  // Fallback: return original trimmed
+  return trimmed;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
 
@@ -60,21 +88,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const fromNumber: string =
       client.twilio_number || TWILIO_FROM_NUMBER;
+    const toNumber = normalizePhone(phone);
 
     // Send SMS via Twilio
     await twilioClient.messages.create({
       from: fromNumber,
-      to: phone,
+      to: toNumber,
       body: smsBody,
     });
 
-    // Try to find the customer row and bump counters (optional but nice)
+    // Optionally find the customer row and bump counters
     try {
       const { data: existingCustomer } = await supabaseAdmin
         .from('customer_contacts')
         .select('*')
         .eq('client_id', clientId)
-        .eq('phone', phone)
+        .eq('phone', phone) // phone stored as user entered it
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -90,7 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('id', existingCustomer.id);
       }
     } catch (updateErr) {
-      console.error('Error updating review_request_count:', updateErr);
+      console.error('Error updating review_request_count (manual):', updateErr);
     }
 
     return res.status(200).json({ ok: true, sent: true });
