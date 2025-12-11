@@ -1,11 +1,19 @@
+// /api/customers.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
 import { applyCors } from './_cors';
 
+const DEFAULT_REVIEW_TEMPLATE =
+  'Hi {{name}}, thanks for choosing {{business_name}}! ' +
+  'It would mean a lot if you could leave us a quick review here: {{review_link}}';
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
 
+  // --------------------------------
+  // GET /api/customers?clientId=xxx
+  // --------------------------------
   if (req.method === 'GET') {
     const clientId = req.query.clientId as string | undefined;
 
@@ -31,6 +39,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ok: true, customers: data });
   }
 
+  // ---------------------------
+  // POST /api/customers
+  // ---------------------------
   if (req.method === 'POST') {
     const { clientId, name, phone, email } = (req.body as any) || {};
 
@@ -40,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .json({ ok: false, error: 'clientId and phone are required' });
     }
 
-    // Load client to know settings + google link
+    // Load client to know settings + google link + templates
     const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('*')
@@ -74,8 +85,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // If auto_review_enabled, send review SMS immediately
     if (client.auto_review_enabled && client.google_review_link) {
       const bizName = client.business_name || 'our business';
-      const smsBody = `Hey ${name || 'there'}, thanks for choosing ${bizName}! We’d really appreciate a quick Google review: ${client.google_review_link}`;
-      const fromNumber = client.twilio_number || TWILIO_FROM_NUMBER;
+      const reviewLink = client.google_review_link as string;
+
+      // Review template can be overridden per client
+      const rawTemplate: string =
+        client.review_sms_template || DEFAULT_REVIEW_TEMPLATE;
+
+      // Very small/cheap templating:
+      const smsBody = rawTemplate
+        .replace(/{{name}}/g, name || 'there')
+        .replace(/{{business_name}}/g, bizName)
+        .replace(/{{review_link}}/g, reviewLink);
+
+      const fromNumber: string =
+        client.twilio_number || TWILIO_FROM_NUMBER;
 
       try {
         await twilioClient.messages.create({
@@ -92,6 +115,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           })
           .eq('id', customer.id);
       } catch (smsError) {
+        // We don't fail the whole request if SMS sending fails
         console.error('Error sending auto review SMS:', smsError);
       }
     }
@@ -102,3 +126,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
