@@ -1,11 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
+import { requireAuth } from './_auth';
 
 // /api/clients
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS + preflight
   if (applyCors(req, res)) return;
+
+  // 🔐 all client operations require a valid admin JWT
+  const user = requireAuth(req, res);
+  if (!user) return; // 401 already sent
+
+  // (optional) enforce admin role from JWT:
+  // if (user.role !== 'admin') {
+  //   return res.status(403).json({ ok: false, error: 'Forbidden' });
+  // }
 
   // -------------------------
   // GET /api/clients
@@ -82,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // -------------------------
-  // PUT /api/clients  (update)
+  // PUT/PATCH /api/clients  (update)
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -90,7 +100,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, ...rest } = body;
 
       if (!id) {
-        return res.status(400).json({ ok: false, error: 'id is required to update a client' });
+        return res
+          .status(400)
+          .json({ ok: false, error: 'id is required to update a client' });
       }
 
       // Only allow specific fields to be updated
