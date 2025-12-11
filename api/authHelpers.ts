@@ -1,45 +1,33 @@
-// api/authHelpers.ts
+// api/_auth.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.SUPABASE_JWT_SECRET!;
+const JWT_SECRET = process.env.SUPABASE_JWT_SECRET!; // from Supabase
 
-export interface AuthUser {
-  sub: string; // user id
+export type AuthUser = {
+  sub: string;               // user id
   email?: string;
-  user_metadata?: {
-    is_admin?: boolean;
-    client_id?: string;
-  };
-}
+  role?: string;
+  [key: string]: any;
+};
 
-export function getAuthUser(req: VercelRequest): AuthUser | null {
-  const auth = req.headers['authorization'] || '';
-  const [, token] = auth.split(' '); // "Bearer xxx"
-  if (!token) return null;
+export function requireAuth(req: VercelRequest, res: VercelResponse): AuthUser | null {
+  const auth = req.headers.authorization;
+
+  if (!auth || !auth.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Missing Authorization header' });
+    return null;
+  }
+
+  const token = auth.slice('Bearer '.length);
 
   try {
-    return jwt.verify(token, JWT_SECRET) as AuthUser;
-  } catch {
+    const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
+    return payload;
+  } catch (err) {
+    console.error('JWT verify failed', err);
+    res.status(401).json({ error: 'Invalid or expired token' });
     return null;
   }
 }
 
-export function requireAuth(
-  req: VercelRequest,
-  res: VercelResponse,
-  opts?: { adminOnly?: boolean }
-): AuthUser | null {
-  const user = getAuthUser(req);
-  if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return null;
-  }
-
-  if (opts?.adminOnly && !user.user_metadata?.is_admin) {
-    res.status(403).json({ error: 'Admin only' });
-    return null;
-  }
-
-  return user;
-}
