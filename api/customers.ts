@@ -68,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ---------------------------
-  // POST /api/customers
+  // POST /api/customers (create)
   // ---------------------------
   if (req.method === 'POST') {
     const { clientId, name, phone, email } = (req.body as any) || {};
@@ -151,8 +151,77 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(201).json({ ok: true, customer });
   }
 
-  res.setHeader('Allow', 'GET, POST');
+  // ---------------------------
+  // PUT/PATCH /api/customers (update)
+  // ---------------------------
+  if (req.method === 'PUT' || req.method === 'PATCH') {
+    const { id, name, phone, email } = (req.body as any) || {};
+
+    if (!id) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'id is required to update a customer' });
+    }
+
+    const updates: Record<string, any> = {};
+    if (name !== undefined) updates.name = name;
+    if (phone !== undefined) updates.phone = phone;
+    if (email !== undefined) updates.email = email;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'No updatable fields provided',
+      });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('customer_contacts')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating customer:', error);
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to update customer' });
+    }
+
+    return res.status(200).json({ ok: true, customer: data });
+  }
+
+  // ---------------------------
+  // DELETE /api/customers
+  // ---------------------------
+  if (req.method === 'DELETE') {
+    const { id } = (req.body as any) || {};
+
+    if (!id) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'id is required to delete a customer' });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('customer_contacts')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting customer:', error);
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to delete customer' });
+    }
+
+    return res.status(200).json({ ok: true });
+  }
+
+  res.setHeader('Allow', 'GET, POST, PUT, PATCH, DELETE');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
 
