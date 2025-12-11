@@ -1,3 +1,4 @@
+// api/reviews.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { resendClient } from '../resendClient';
@@ -5,18 +6,15 @@ import { applyCors } from './_cors';
 import { requireAuth } from './_auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // ----------------------------------
-  // CORS + OPTIONS handling
-  // ----------------------------------
+  // CORS + OPTIONS
   if (applyCors(req, res)) return;
 
   // ----------------------------------
-  // GET /api/reviews?clientId=xxx
-  // admin-only (JWT required)
+  // GET /api/reviews?clientId=xxx  (ADMIN ONLY)
   // ----------------------------------
   if (req.method === 'GET') {
     const user = requireAuth(req, res);
-    if (!user) return; // 401 already sent
+    if (!user) return;
 
     const clientId = req.query.clientId as string | undefined;
 
@@ -34,14 +32,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       console.error('Error fetching reviews:', error);
-      return res.status(500).json({ ok: false, error: 'Failed to fetch reviews' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to fetch reviews' });
     }
 
     return res.status(200).json({ ok: true, reviews: data });
   }
 
   // ----------------------------------
-  // POST /api/reviews  (public)
+  // POST /api/reviews  (PUBLIC – review form)
   // ----------------------------------
   if (req.method === 'POST') {
     const { clientId, name, rating, comments } = (req.body as any) || {};
@@ -117,3 +117,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
