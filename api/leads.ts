@@ -1,3 +1,4 @@
+// api/leads.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { twilioClient, TWILIO_FROM_NUMBER } from '../twilioClient';
@@ -5,18 +6,15 @@ import { applyCors } from './_cors';
 import { requireAuth } from './_auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // -----------------------------
-  // CORS + OPTIONS handling
-  // -----------------------------
+  // CORS + OPTIONS
   if (applyCors(req, res)) return;
 
   // -----------------------------
-  // GET /api/leads?clientId=xxx
-  // admin-only (JWT required)
+  // GET /api/leads?clientId=xxx  (ADMIN ONLY)
   // -----------------------------
   if (req.method === 'GET') {
     const user = requireAuth(req, res);
-    if (!user) return; // 401 already sent
+    if (!user) return;
 
     const clientId = req.query.clientId as string | undefined;
 
@@ -41,10 +39,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // -----------------------------
-  // POST /api/leads  (public form)
+  // POST /api/leads  (PUBLIC – website forms)
   // -----------------------------
   if (req.method === 'POST') {
-    const { clientId, name, phone, email, message, source } = (req.body as any) || {};
+    const { clientId, name, phone, email, message, source } =
+      (req.body as any) || {};
 
     if (!clientId) {
       return res.status(400).json({ ok: false, error: 'clientId is required' });
@@ -116,3 +115,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
