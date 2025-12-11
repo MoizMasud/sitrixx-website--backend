@@ -2,16 +2,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
-import { requireAuth } from './_auth';
 
 // /api/clients
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS + preflight
+  // Always run CORS first
   if (applyCors(req, res)) return;
-
-  // 🔐 Require JWT for ALL client operations
-  const user = requireAuth(req, res);
-  if (!user) return; // response already sent
 
   // -------------------------
   // GET /api/clients
@@ -109,7 +104,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .json({ ok: false, error: 'id is required to update a client' });
       }
 
-      // Only allow specific fields to be updated
       const allowedFields = [
         'business_name',
         'website_url',
@@ -122,7 +116,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ];
 
       const updates: Record<string, any> = {};
-
       for (const key of allowedFields) {
         if (rest[key] !== undefined) {
           updates[key] = rest[key];
@@ -163,6 +156,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST, PUT, PATCH');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
 
 
