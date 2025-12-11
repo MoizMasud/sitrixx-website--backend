@@ -8,6 +8,34 @@ const DEFAULT_REVIEW_TEMPLATE =
   'Hi {{name}}, thanks for choosing {{business_name}}! ' +
   'It would mean a lot if you could leave us a quick review here: {{review_link}}';
 
+// Normalize to E.164 for North America (default +1)
+const normalizePhone = (raw: string): string => {
+  if (!raw) return raw;
+
+  const trimmed = raw.trim();
+
+  // If user already gave us +..., trust it
+  if (trimmed.startsWith('+')) {
+    return trimmed;
+  }
+
+  // Strip everything that's not a digit
+  const digits = trimmed.replace(/\D/g, '');
+
+  // 10 digits -> assume North America -> +1XXXXXXXXXX
+  if (digits.length === 10) {
+    return `+1${digits}`;
+  }
+
+  // 11 digits starting with 1 -> +1XXXXXXXXXX
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+${digits}`;
+  }
+
+  // Fallback: return original trimmed
+  return trimmed;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
 
@@ -63,7 +91,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ ok: false, error: 'Invalid clientId' });
     }
 
-    // Insert customer
+    // Insert customer (store phone as user entered it)
     const { data: customer, error } = await supabaseAdmin
       .from('customer_contacts')
       .insert({
@@ -91,7 +119,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rawTemplate: string =
         client.review_sms_template || DEFAULT_REVIEW_TEMPLATE;
 
-      // Very small/cheap templating:
       const smsBody = rawTemplate
         .replace(/{{name}}/g, name || 'there')
         .replace(/{{business_name}}/g, bizName)
@@ -99,11 +126,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const fromNumber: string =
         client.twilio_number || TWILIO_FROM_NUMBER;
+      const toNumber = normalizePhone(phone);
 
       try {
         await twilioClient.messages.create({
           from: fromNumber,
-          to: phone,
+          to: toNumber,
           body: smsBody,
         });
 
@@ -126,4 +154,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
