@@ -1,26 +1,31 @@
 // api/_cors.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// You can tighten this later to your Webflow domain:
-// const allowedOrigin = 'https://sitrixx.webflow.io';
-const allowedOrigin = '*';
+// For now you can leave this as '*'.
+// When you move to production you can change it to your Webflow domain:
+//   const ALLOWED_ORIGIN = 'https://sitrixx.webflow.io';
+const ALLOWED_ORIGIN =
+  process.env.CORS_ORIGIN || '*';
 
 export function applyCors(req: VercelRequest, res: VercelResponse): boolean {
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  // Core CORS headers
+  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  res.setHeader('Vary', 'Origin');
   res.setHeader(
     'Access-Control-Allow-Methods',
     'GET,POST,PUT,PATCH,DELETE,OPTIONS'
   );
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization'
+    'Content-Type, Authorization, X-Requested-With'
   );
 
-  // Preflight
+  // Preflight request – reply and stop
   if (req.method === 'OPTIONS') {
     res.status(200).end();
-    return true; // caller should stop
+    return true;
   }
 
-  return false; // caller should continue
+  // Continue to handler
+  return false;
 }
