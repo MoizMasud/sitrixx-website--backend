@@ -104,16 +104,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .json({ ok: false, error: 'id is required to update a client' });
       }
 
-      const allowedFields = [
-        'business_name',
-        'website_url',
-        'booking_link',
-        'google_review_link',
-        'owner_email',
-        'twilio_number',
-        'forwarding_phone',
-        'custom_sms_template',
-      ];
+    const allowedFields = [
+      'business_name',
+      'website_url',
+      'booking_link',
+      'google_review_link',
+      'owner_email',
+      'twilio_number',
+      'forwarding_phone',
+      'custom_sms_template',
+      'auto_review_enabled',
+    ];
+
 
       const updates: Record<string, any> = {};
       for (const key of allowedFields) {
