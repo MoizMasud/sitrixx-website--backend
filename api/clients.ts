@@ -3,6 +3,23 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
 
+// Helper: extract bearer token
+function getBearerToken(req: VercelRequest) {
+  const auth = req.headers.authorization || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return m?.[1] || null;
+}
+
+// Helper: get authed user from token (mobile / web admin calls)
+async function getAuthedUser(req: VercelRequest) {
+  const token = getBearerToken(req);
+  if (!token) return null;
+
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !data?.user) return null;
+  return data.user;
+}
+
 // /api/clients
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Always run CORS first
@@ -10,9 +27,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // -------------------------
   // GET /api/clients
+  //   - default: returns ALL clients (keeps website/admin working)
+  //   - mine=1: returns only clients linked to authed user via client_users
   // -------------------------
   if (req.method === 'GET') {
     try {
+      const mine =
+        req.query?.mine === '1' ||
+        req.query?.mine === 'true' ||
+        req.query?.scope === 'mine';
+
+      // ✅ Mobile-safe mode (only return this user's clients)
+      if (mine) {
+        const user = await getAuthedUser(req);
+        if (!user) {
+          return res.status(401).json({ ok: false, error: 'Unauthorized' });
+        }
+
+        const { data: links, error: linkErr } = await supabaseAdmin
+          .from('client_users')
+          .select('client_id')
+          .eq('user_id', user.id);
+
+        if (linkErr) {
+          console.error('Error fetching client_users:', linkErr);
+          return res
+            .status(500)
+            .json({ ok: false, error: 'Failed to fetch user clients' });
+        }
+
+        const clientIds = (links || []).map((x: any) => x.client_id).filter(Boolean);
+
+        if (clientIds.length === 0) {
+          // important: return [] not error (lets app show empty state gracefully)
+          return res.status(200).json({ ok: true, clients: [] });
+        }
+
+        const { data, error } = await supabaseAdmin
+          .from('clients')
+          .select('*')
+          .in('id', clientIds)
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Error fetching clients (mine):', error);
+          return res.status(500).json({ ok: false, error: 'Failed to fetch clients' });
+        }
+
+        return res.status(200).json({ ok: true, clients: data });
+      }
+
+      // ✅ Existing behavior (keeps website/admin working)
       const { data, error } = await supabaseAdmin
         .from('clients')
         .select('*')
@@ -32,6 +97,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // -------------------------
   // POST /api/clients (create)
+  // NOTE: removed owner_email because column doesn't exist
   // -------------------------
   if (req.method === 'POST') {
     try {
@@ -41,7 +107,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         website_url,
         booking_link,
         google_review_link,
-        owner_email,
         twilio_number,
         forwarding_phone,
         custom_sms_template, // missed-call template
@@ -49,10 +114,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         auto_review_enabled,
       } = (req.body as any) || {};
 
-      if (!id || !business_name || !owner_email) {
+      if (!id || !business_name) {
         return res.status(400).json({
           ok: false,
-          error: 'id, business_name, and owner_email are required',
+          error: 'id and business_name are required',
         });
       }
 
@@ -64,7 +129,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           website_url,
           booking_link,
           google_review_link,
-          owner_email,
           twilio_number,
           forwarding_phone,
           custom_sms_template,
@@ -89,6 +153,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // -------------------------
   // PUT /api/clients (update)
   // PATCH /api/clients (partial update)
+  // NOTE: removed owner_email from allowed fields
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -96,7 +161,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, ...rest } = body;
 
       if (!id) {
-        return res.status(400).json({ ok: false, error: 'id is required to update a client' });
+        return res
+          .status(400)
+          .json({ ok: false, error: 'id is required to update a client' });
       }
 
       const allowedFields = [
@@ -104,7 +171,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'website_url',
         'booking_link',
         'google_review_link',
-        'owner_email',
         'twilio_number',
         'forwarding_phone',
         'custom_sms_template', // missed-call template
@@ -174,8 +240,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST, PUT, PATCH, DELETE');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
-
-
-
 
 
