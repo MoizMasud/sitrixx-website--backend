@@ -19,7 +19,8 @@ function isAllowedOrigin(origin: string) {
 
 export function applyCors(req: VercelRequest, res: VercelResponse): boolean {
   const origin = (req.headers.origin as string) || '';
-
+  res.setHeader('X-Sitrixx-Cors', 'v2');
+  res.setHeader('X-Sitrixx-Origin-Seen', origin || 'none');
   if (isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
