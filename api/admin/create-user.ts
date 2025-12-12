@@ -3,9 +3,6 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
 import { applyCors } from '../_cors';
 
-// -------------------------
-// Helpers
-// -------------------------
 function getBearerToken(req: VercelRequest) {
   const authHeader = req.headers.authorization || '';
   return authHeader.startsWith('Bearer ')
@@ -20,10 +17,7 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
     return null;
   }
 
-  // Identify caller
-  const { data: userData, error: userErr } =
-    await supabaseAdmin.auth.getUser(accessToken);
-
+  const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(accessToken);
   if (userErr || !userData?.user) {
     res.status(401).json({ ok: false, error: 'Invalid or expired session' });
     return null;
@@ -31,7 +25,6 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
 
   const callerId = userData.user.id;
 
-  // Check role from profiles table
   const { data: profile, error: profErr } = await supabaseAdmin
     .from('profiles')
     .select('role')
@@ -51,25 +44,15 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
   return { callerId };
 }
 
-// -------------------------
-// Handler
-// -------------------------
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
-  // CORS first
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
-    return res
-      .status(405)
-      .json({ ok: false, error: 'Method Not Allowed' });
+    return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
 
-  // Admin guard
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -84,25 +67,19 @@ export default async function handler(
     } = (req.body as any) || {};
 
     if (!email || !password) {
-      return res.status(400).json({
-        ok: false,
-        error: 'email and password are required',
-      });
+      return res.status(400).json({ ok: false, error: 'email and password are required' });
     }
 
-    // -------------------------
     // 1) Create Auth user
-    // -------------------------
-    const { data, error } =
-      await supabaseAdmin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: {
-          display_name: display_name || '',
-          phone: phone || '',
-        },
-      });
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        display_name: display_name || '',
+        phone: phone || '',
+      },
+    });
 
     if (error || !data?.user) {
       console.error('Error creating auth user:', error);
@@ -114,10 +91,7 @@ export default async function handler(
 
     const newUserId = data.user.id;
 
-    // -------------------------
-    // 2) Update profiles row
-    // (trigger already creates it, this ensures correctness)
-    // -------------------------
+    // 2) Update profiles row (trigger creates it, we ensure correctness + flags)
     const { error: profileErr } = await supabaseAdmin
       .from('profiles')
       .update({
@@ -125,12 +99,12 @@ export default async function handler(
         display_name: display_name || '',
         phone: phone || '',
         client_id: client_id || null,
+        needs_password_change: true, // ✅ FORCE CHANGE ON FIRST LOGIN
       })
       .eq('id', newUserId);
 
     if (profileErr) {
       console.error('Error updating profile:', profileErr);
-      // Auth user exists; profile update failed
       return res.status(500).json({
         ok: false,
         error: 'User created but failed to update profile',
@@ -144,17 +118,16 @@ export default async function handler(
         email: data.user.email,
         role,
         client_id: client_id || null,
+        needs_password_change: true,
         created_at: data.user.created_at,
       },
     });
   } catch (err) {
     console.error('Unexpected error creating user:', err);
-    return res.status(500).json({
-      ok: false,
-      error: 'Unexpected server error',
-    });
+    return res.status(500).json({ ok: false, error: 'Unexpected server error' });
   }
 }
+
 
 
 
