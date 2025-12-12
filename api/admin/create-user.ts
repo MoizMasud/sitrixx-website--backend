@@ -1,3 +1,5 @@
+
+
 // api/admin/create-user.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
@@ -10,13 +12,20 @@ function getBearerToken(req: VercelRequest) {
     : '';
 }
 
+/**
+ * Validates:
+ * - Caller has a valid Supabase session token (Authorization: Bearer <access_token>)
+ * - Caller is admin (profiles.role === 'admin')
+ */
 async function requireAdmin(req: VercelRequest, res: VercelResponse) {
   const accessToken = getBearerToken(req);
+
   if (!accessToken) {
     res.status(401).json({ ok: false, error: 'Missing Authorization token' });
     return null;
   }
 
+  // Validate session token -> get caller user
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(accessToken);
   if (userErr || !userData?.user) {
     res.status(401).json({ ok: false, error: 'Invalid or expired session' });
@@ -25,6 +34,7 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
 
   const callerId = userData.user.id;
 
+  // Check caller role from profiles
   const { data: profile, error: profErr } = await supabaseAdmin
     .from('profiles')
     .select('role')
@@ -45,29 +55,39 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // CORS
   if (applyCors(req, res)) return;
-  if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // Preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Only POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
 
+  // Admin auth
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   try {
-    const {
-      email,
-      password,
-      display_name,
-      phone,
-      role = 'user',
-      client_id,
-    } = (req.body as any) || {};
+    const body: any = req.body || {};
+
+    const email = (body.email || '').trim().toLowerCase();
+    const password = body.password;
+    const display_name = body.display_name ?? body.displayName ?? '';
+    const phone = body.phone ?? '';
+    const role = body.role ?? 'user';
+    const client_id = body.client_id ?? body.clientId ?? null;
 
     if (!email || !password) {
-      return res.status(400).json({ ok: false, error: 'email and password are required' });
+      return res.status(400).json({
+        ok: false,
+        error: 'email and password are required',
+      });
     }
 
     // 1) Create Auth user
@@ -91,23 +111,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const newUserId = data.user.id;
 
-    // 2) Update profiles row (trigger creates it, we ensure correctness + flags)
+    // 2) Ensure profile exists + set role + set password-change flag
+    // ✅ upsert prevents "profile missing" failures
     const { error: profileErr } = await supabaseAdmin
       .from('profiles')
-      .update({
-        role,
-        display_name: display_name || '',
-        phone: phone || '',
-        client_id: client_id || null,
-        needs_password_change: true, // ✅ FORCE CHANGE ON FIRST LOGIN
-      })
-      .eq('id', newUserId);
+      .upsert(
+        {
+          id: newUserId,
+          email,
+          role,
+          display_name: display_name || '',
+          phone: phone || '',
+          client_id,
+          needs_password_change: true, // ✅ force change on first login
+        },
+        { onConflict: 'id' }
+      );
 
     if (profileErr) {
-      console.error('Error updating profile:', profileErr);
+      console.error('Profile upsert failed:', profileErr);
       return res.status(500).json({
         ok: false,
-        error: 'User created but failed to update profile',
+        error: 'User created but profile setup failed',
       });
     }
 
@@ -117,18 +142,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         id: newUserId,
         email: data.user.email,
         role,
-        client_id: client_id || null,
+        client_id,
         needs_password_change: true,
         created_at: data.user.created_at,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Unexpected error creating user:', err);
     return res.status(500).json({ ok: false, error: 'Unexpected server error' });
   }
 }
-
-
 
 
 
