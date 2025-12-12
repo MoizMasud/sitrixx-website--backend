@@ -1,5 +1,3 @@
-
-
 // api/admin/create-user.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
@@ -12,11 +10,6 @@ function getBearerToken(req: VercelRequest) {
     : '';
 }
 
-/**
- * Validates:
- * - Caller has a valid Supabase session token (Authorization: Bearer <access_token>)
- * - Caller is admin (profiles.role === 'admin')
- */
 async function requireAdmin(req: VercelRequest, res: VercelResponse) {
   const accessToken = getBearerToken(req);
 
@@ -25,7 +18,6 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
     return null;
   }
 
-  // Validate session token -> get caller user
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(accessToken);
   if (userErr || !userData?.user) {
     res.status(401).json({ ok: false, error: 'Invalid or expired session' });
@@ -34,7 +26,6 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
 
   const callerId = userData.user.id;
 
-  // Check caller role from profiles
   const { data: profile, error: profErr } = await supabaseAdmin
     .from('profiles')
     .select('role')
@@ -55,21 +46,14 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
   if (applyCors(req, res)) return;
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  // Only POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
 
-  // Admin auth
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -84,10 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const client_id = body.client_id ?? body.clientId ?? null;
 
     if (!email || !password) {
-      return res.status(400).json({
-        ok: false,
-        error: 'email and password are required',
-      });
+      return res.status(400).json({ ok: false, error: 'email and password are required' });
     }
 
     // 1) Create Auth user
@@ -103,36 +84,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error || !data?.user) {
       console.error('Error creating auth user:', error);
-      return res.status(500).json({
-        ok: false,
-        error: error?.message || 'Failed to create user',
-      });
+      return res.status(500).json({ ok: false, error: error?.message || 'Failed to create user' });
     }
 
     const newUserId = data.user.id;
 
-    // 2) Ensure profile exists + set role + set password-change flag
-    // ✅ upsert prevents "profile missing" failures
+    // 2) Upsert profile (ONLY fields that you are sure exist in your profiles table)
+    const profilePayload: Record<string, any> = {
+      id: newUserId,
+      role,
+      needs_password_change: true,
+    };
+
+    // Only include these if your profiles table has them
+    if (display_name) profilePayload.display_name = display_name;
+    if (phone) profilePayload.phone = phone;
+    if (client_id) profilePayload.client_id = client_id;
+
     const { error: profileErr } = await supabaseAdmin
       .from('profiles')
-      .upsert(
-        {
-          id: newUserId,
-          email,
-          role,
-          display_name: display_name || '',
-          phone: phone || '',
-          client_id,
-          needs_password_change: true, // ✅ force change on first login
-        },
-        { onConflict: 'id' }
-      );
+      .upsert(profilePayload, { onConflict: 'id' });
 
     if (profileErr) {
       console.error('Profile upsert failed:', profileErr);
+
+      // Optional cleanup: delete auth user so you don’t end up with orphan users
+      try {
+        await supabaseAdmin.auth.admin.deleteUser(newUserId);
+      } catch (cleanupErr) {
+        console.error('Cleanup deleteUser failed:', cleanupErr);
+      }
+
       return res.status(500).json({
         ok: false,
         error: 'User created but profile setup failed',
+        debug: {
+          message: (profileErr as any).message,
+          details: (profileErr as any).details,
+          hint: (profileErr as any).hint,
+          code: (profileErr as any).code,
+        },
       });
     }
 
@@ -152,6 +143,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ ok: false, error: 'Unexpected server error' });
   }
 }
+
 
 
 
