@@ -1,53 +1,53 @@
 // api/admin/create-user.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
-import { applyCors } from '../api/_cors'; // adjust if your path is different
+import { applyCors } from '../api/_cors'; // adjust path if needed
 
 function getBearerToken(req: VercelRequest) {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ')
+  return authHeader.startsWith('Bearer ')
     ? authHeader.slice('Bearer '.length).trim()
     : '';
-  return token;
-}
-
-function isAdminUser(user: any) {
-  const roleFromAppMeta = user?.app_metadata?.role;
-  const roleFromUserMeta = user?.user_metadata?.role;
-  return roleFromAppMeta === 'admin' || roleFromUserMeta === 'admin';
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS first
   if (applyCors(req, res)) return;
-
-  // Always allow OPTIONS
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Only POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
 
-  // Verify Supabase session token
+  // 1) Identify the caller (Supabase session token)
   const accessToken = getBearerToken(req);
   if (!accessToken) {
     return res.status(401).json({ ok: false, error: 'Missing Authorization token' });
   }
 
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(accessToken);
-
   if (userErr || !userData?.user) {
     return res.status(401).json({ ok: false, error: 'Invalid or expired session' });
   }
 
-  // Admin check
-  if (!isAdminUser(userData.user)) {
+  const callerId = userData.user.id;
+
+  // 2) Check role from profiles table
+  const { data: profile, error: profErr } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', callerId)
+    .single();
+
+  if (profErr || !profile) {
+    return res.status(403).json({ ok: false, error: 'Forbidden (no profile)' });
+  }
+
+  if (profile.role !== 'admin') {
     return res.status(403).json({ ok: false, error: 'Forbidden (admin only)' });
   }
 
-  // Create user
+  // 3) Create the new user
   try {
     const { email, password, display_name, phone } = (req.body as any) || {};
 
@@ -83,4 +83,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ ok: false, error: 'Unexpected server error' });
   }
 }
+
 
