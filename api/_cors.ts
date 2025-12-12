@@ -4,7 +4,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 function isAllowedOrigin(origin: string) {
   if (!origin) return false;
 
-  // Allow Webflow Designer + Webflow hosted sites
+  // Allow Webflow hosted + Designer domains (covers sitrixx.design.webflow.com + *.app.webflow.io)
   if (/^https:\/\/([a-z0-9-]+\.)*webflow\.io$/i.test(origin)) return true;
   if (/^https:\/\/([a-z0-9-]+\.)*webflow\.com$/i.test(origin)) return true;
 
@@ -24,14 +24,9 @@ export function applyCors(req: VercelRequest, res: VercelResponse): boolean {
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With'
-  );
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
-  // If you ever need cookies in the future, uncomment these:
-  // res.setHeader('Access-Control-Allow-Credentials', 'true');
-
+  // Preflight
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return true;
