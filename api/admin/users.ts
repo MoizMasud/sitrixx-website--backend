@@ -133,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const newUserId = created.user.id;
 
       // 2) Create profile row (force change later)
-      const { error: profileErr } = await supabaseAdmin.from('profiles').insert({
+      const { error: profileErr } = await supabaseAdmin.from('profiles').upsert({
         id: newUserId,
         email: String(email).trim(),
         role,
