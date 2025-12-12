@@ -1,3 +1,4 @@
+
 // api/admin/users.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
@@ -25,13 +26,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 🔐 Check admin role
-    const { data: adminProfile, error: adminErr } = await supabaseAdmin
+    const { data: adminProfile, error: adminProfileErr } = await supabaseAdmin
       .from('profiles')
       .select('role')
       .eq('id', user.id)
       .single();
 
-    if (adminErr) throw adminErr;
+    if (adminProfileErr) {
+      console.error('Error fetching admin profile:', adminProfileErr);
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Failed to verify admin role' });
+    }
 
     if (adminProfile?.role !== 'admin') {
       return res.status(403).json({ ok: false, error: 'Admin only' });
@@ -56,68 +62,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error listing users:', error);
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to load users' });
+      }
 
       return res.status(200).json({ ok: true, users: profiles });
     }
 
     // ===============================
-    // POST — create user (+ optional client link)
+    // POST — create user
     // Body:
-    //  { email, password?, role?, clientId? }
+    //  - email (required)
+    //  - role (optional, default 'client')
+    //  - clientId (optional) -> will link in client_users for mobile "mine" queries
+    //  - tempPassword (optional) -> if not provided, we auto-generate
     // ===============================
     if (req.method === 'POST') {
-      const { email, password, role = 'client', clientId } = (req.body || {}) as {
-        email?: string;
-        password?: string;
-        role?: string;
-        clientId?: string;
-      };
+      const { email, role = 'client', clientId, tempPassword } = req.body || {};
 
       if (!email) {
         return res.status(400).json({ ok: false, error: 'Email required' });
       }
 
-      // If UI provides a temp password, use it. Otherwise generate one.
-      const tempPassword =
-        (password && String(password).trim()) || Math.random().toString(36).slice(-10);
-
-      if (tempPassword.length < 8) {
-        return res.status(400).json({
-          ok: false,
-          error: 'Password required (min 8 characters)',
-        });
-      }
+      // Temporary password (min 8 chars)
+      const generatedTemp = Math.random().toString(36).slice(-10);
+      const finalTempPassword =
+        typeof tempPassword === 'string' && tempPassword.length >= 8
+          ? tempPassword
+          : generatedTemp;
 
       // 1) Create auth user
       const { data: createdUser, error: createError } =
         await supabaseAdmin.auth.admin.createUser({
           email,
-          password: tempPassword,
+          password: finalTempPassword,
           email_confirm: true,
         });
 
-      if (createError || !createdUser.user) {
-        // surface the real error
+      if (createError || !createdUser?.user) {
         console.error('createUser error:', createError);
         return res.status(500).json({
           ok: false,
           step: 'createUser',
+          code: (createError as any)?.code,
           error: createError?.message || 'Database error creating new user',
-          code: createError?.code || 'unexpected_failure',
         });
       }
 
-      // 2) Create profile row
-      const { error: profileError } = await supabaseAdmin.from('profiles').insert({
-        id: createdUser.user.id,
-        email,
-        role,
-        needs_password_change: true,
-      });
+      const newUserId = createdUser.user.id;
+
+      // 2) Create/Update profile safely (avoids duplicate key if you have a trigger)
+      const { error: profileError } = await supabaseAdmin.from('profiles').upsert(
+        {
+          id: newUserId,
+          email,
+          role,
+          needs_password_change: true,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' },
+      );
 
       if (profileError) {
-        console.error('profile insert error:', profileError);
+        console.error('profile upsert error:', profileError);
         return res.status(500).json({
           ok: false,
           step: 'createProfile',
@@ -125,15 +135,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // 3) OPTIONAL: link user -> client
+      // 3) Optionally link user -> client (mobile app uses this to resolve "mine")
       if (clientId) {
-        const { error: linkError } = await supabaseAdmin.from('client_users').insert({
-          user_id: createdUser.user.id,
-          client_id: clientId,
-        });
+        // If you have a unique constraint on (user_id, client_id), upsert is safest
+        const { error: linkError } = await supabaseAdmin
+          .from('client_users')
+          .upsert(
+            { user_id: newUserId, client_id: clientId },
+            { onConflict: 'user_id,client_id' },
+          );
 
         if (linkError) {
-          console.error('client_users insert error:', linkError);
+          console.error('client_users upsert error:', linkError);
           return res.status(500).json({
             ok: false,
             step: 'linkClient',
@@ -144,17 +157,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(201).json({
         ok: true,
-        userId: createdUser.user.id,
-        tempPassword, // useful for your admin UI to show/copy
+        userId: newUserId,
+        tempPassword: finalTempPassword, // you can hide this later if you prefer
         linkedClientId: clientId || null,
       });
     }
 
     // ===============================
-    // PATCH — update user profile
+    // PATCH — update user profile fields
     // ===============================
     if (req.method === 'PATCH') {
-      const { userId, display_name, phone, role } = req.body;
+      const { userId, display_name, phone, role } = req.body || {};
 
       if (!userId) {
         return res.status(400).json({ ok: false, error: 'userId required' });
@@ -170,7 +183,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         .eq('id', userId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error updating user profile:', error);
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to update user' });
+      }
 
       return res.status(200).json({ ok: true });
     }
@@ -179,16 +197,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // DELETE — delete user
     // ===============================
     if (req.method === 'DELETE') {
-      const { userId } = req.body;
+      const { userId } = req.body || {};
 
       if (!userId) {
         return res.status(400).json({ ok: false, error: 'userId required' });
       }
 
-      // delete links first (safe)
+      // Clean up linking rows first (avoid FK issues)
       await supabaseAdmin.from('client_users').delete().eq('user_id', userId);
 
+      // Then delete profile row
       await supabaseAdmin.from('profiles').delete().eq('id', userId);
+
+      // Then delete auth user
       await supabaseAdmin.auth.admin.deleteUser(userId);
 
       return res.status(200).json({ ok: true });
@@ -196,10 +217,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
   } catch (err: any) {
-    console.error(err);
+    console.error('admin/users error:', err);
     return res.status(500).json({
       ok: false,
-      error: err.message || 'Internal server error',
+      error: err?.message || 'Internal server error',
     });
   }
 }
