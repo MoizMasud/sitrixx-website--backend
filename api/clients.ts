@@ -1,5 +1,6 @@
 // /api/clients.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import crypto from 'crypto';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
 
@@ -18,6 +19,15 @@ async function getAuthedUser(req: VercelRequest) {
   const { data, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !data?.user) return null;
   return data.user;
+}
+
+function asBool(v: any): boolean | undefined {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    if (v.toLowerCase() === 'true') return true;
+    if (v.toLowerCase() === 'false') return false;
+  }
+  return undefined;
 }
 
 // /api/clients
@@ -56,7 +66,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .json({ ok: false, error: 'Failed to fetch user clients' });
         }
 
-        const clientIds = (links || []).map((x: any) => x.client_id).filter(Boolean);
+        const clientIds = (links || [])
+          .map((x: any) => x.client_id)
+          .filter(Boolean);
 
         if (clientIds.length === 0) {
           // important: return [] not error (lets app show empty state gracefully)
@@ -71,7 +83,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) {
           console.error('Error fetching clients (mine):', error);
-          return res.status(500).json({ ok: false, error: 'Failed to fetch clients' });
+          return res
+            .status(500)
+            .json({ ok: false, error: 'Failed to fetch clients' });
         }
 
         return res.status(200).json({ ok: true, clients: data });
@@ -85,24 +99,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error fetching clients:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to fetch clients' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to fetch clients' });
       }
 
       return res.status(200).json({ ok: true, clients: data });
     } catch (err) {
       console.error('Unexpected error fetching clients:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
   // -------------------------
   // POST /api/clients (create)
-  // NOTE: removed owner_email because column doesn't exist
+  // - Generates UUID server-side
+  // - Still accepts id if you want (backwards-compatible),
+  //   but ignores empty/invalid ids safely.
+  // NOTE: owner_email removed because column doesn't exist (your DB)
   // -------------------------
   if (req.method === 'POST') {
     try {
       const {
-        id,
+        id: maybeId,
         business_name,
         website_url,
         booking_link,
@@ -114,12 +135,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         auto_review_enabled,
       } = (req.body as any) || {};
 
-      if (!id || !business_name) {
+      if (!business_name) {
         return res.status(400).json({
           ok: false,
-          error: 'id and business_name are required',
+          error: 'business_name is required',
         });
       }
+
+      // ✅ always ensure we have an id
+      const id =
+        typeof maybeId === 'string' && maybeId.trim()
+          ? maybeId.trim()
+          : crypto.randomUUID();
 
       const { data, error } = await supabaseAdmin
         .from('clients')
@@ -133,27 +160,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           forwarding_phone,
           custom_sms_template,
           review_sms_template,
-          auto_review_enabled,
+          auto_review_enabled: asBool(auto_review_enabled) ?? false,
         })
         .select()
         .single();
 
       if (error) {
         console.error('Error creating client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to create client' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to create client' });
       }
 
       return res.status(201).json({ ok: true, client: data });
     } catch (err) {
       console.error('Unexpected error creating client:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
   // -------------------------
   // PUT /api/clients (update)
   // PATCH /api/clients (partial update)
-  // NOTE: removed owner_email from allowed fields
+  // NOTE: owner_email removed from allowed fields (DB column missing)
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -161,9 +192,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, ...rest } = body;
 
       if (!id) {
-        return res
-          .status(400)
-          .json({ ok: false, error: 'id is required to update a client' });
+        return res.status(400).json({
+          ok: false,
+          error: 'id is required to update a client',
+        });
       }
 
       const allowedFields = [
@@ -183,8 +215,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (rest[key] !== undefined) updates[key] = rest[key];
       }
 
+      // normalize boolean if present
+      if (updates.auto_review_enabled !== undefined) {
+        updates.auto_review_enabled = asBool(updates.auto_review_enabled);
+      }
+
       if (Object.keys(updates).length === 0) {
-        return res.status(400).json({ ok: false, error: 'No updatable fields provided' });
+        return res.status(400).json({
+          ok: false,
+          error: 'No updatable fields provided',
+        });
       }
 
       const { data, error } = await supabaseAdmin
@@ -196,13 +236,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error updating client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to update client' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to update client' });
       }
 
       return res.status(200).json({ ok: true, client: data });
     } catch (err) {
       console.error('Unexpected error updating client:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
@@ -214,7 +258,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const id = (req.query?.id as string) || (req.body?.id as string);
 
       if (!id) {
-        return res.status(400).json({ ok: false, error: 'id is required to delete a client' });
+        return res
+          .status(400)
+          .json({ ok: false, error: 'id is required to delete a client' });
       }
 
       const { data, error } = await supabaseAdmin
@@ -226,13 +272,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error deleting client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to delete client' });
+        return res
+          .status(500)
+          .json({ ok: false, error: 'Failed to delete client' });
       }
 
       return res.status(200).json({ ok: true, client: data });
     } catch (err) {
       console.error('Unexpected error deleting client:', err);
-      return res.status(500).json({ ok: false, error: 'Unexpected server error' });
+      return res
+        .status(500)
+        .json({ ok: false, error: 'Unexpected server error' });
     }
   }
 
@@ -240,5 +290,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, POST, PUT, PATCH, DELETE');
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 }
+
 
 
