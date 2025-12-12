@@ -1,6 +1,5 @@
 // /api/clients.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import crypto from 'crypto';
 import { supabaseAdmin } from '../supabaseAdmin';
 import { applyCors } from './_cors';
 
@@ -21,13 +20,18 @@ async function getAuthedUser(req: VercelRequest) {
   return data.user;
 }
 
-function asBool(v: any): boolean | undefined {
-  if (typeof v === 'boolean') return v;
-  if (typeof v === 'string') {
-    if (v.toLowerCase() === 'true') return true;
-    if (v.toLowerCase() === 'false') return false;
-  }
-  return undefined;
+// Helper: best-effort UUID (Node 18+ on Vercel supports crypto.randomUUID)
+function makeUuid() {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const crypto = require('crypto');
+  if (crypto?.randomUUID) return crypto.randomUUID();
+
+  // Fallback (very unlikely needed)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c: string) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 // /api/clients
@@ -115,15 +119,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // -------------------------
   // POST /api/clients (create)
-  // - Generates UUID server-side
-  // - Still accepts id if you want (backwards-compatible),
-  //   but ignores empty/invalid ids safely.
-  // NOTE: owner_email removed because column doesn't exist (your DB)
+  // ✅ auto-generates UUID if id not provided
+  // ✅ optionally links creating authed user to the new client
+  //
+  // How linking works:
+  // - if linkUser=1 (or linkUser=true) OR linkUser is missing (default true),
+  //   and a Bearer token is provided,
+  //   we insert into client_users(user_id, client_id)
+  //
+  // NOTE:
+  // - does NOT require owner_email (column doesn't exist)
   // -------------------------
   if (req.method === 'POST') {
     try {
+      const body = (req.body as any) || {};
       const {
-        id: maybeId,
+        id: providedId,
         business_name,
         website_url,
         booking_link,
@@ -133,7 +144,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         custom_sms_template, // missed-call template
         review_sms_template, // Google review template
         auto_review_enabled,
-      } = (req.body as any) || {};
+        // optional flags
+        linkUser, // boolean-ish
+      } = body;
 
       if (!business_name) {
         return res.status(400).json({
@@ -142,16 +155,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // ✅ always ensure we have an id
-      const id =
-        typeof maybeId === 'string' && maybeId.trim()
-          ? maybeId.trim()
-          : crypto.randomUUID();
+      const newClientId = (providedId && String(providedId).trim()) || makeUuid();
 
-      const { data, error } = await supabaseAdmin
+      const { data: client, error: insertErr } = await supabaseAdmin
         .from('clients')
         .insert({
-          id,
+          id: newClientId,
           business_name,
           website_url,
           booking_link,
@@ -160,31 +169,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           forwarding_phone,
           custom_sms_template,
           review_sms_template,
-          auto_review_enabled: asBool(auto_review_enabled) ?? false,
+          auto_review_enabled,
         })
         .select()
         .single();
 
-      if (error) {
-        console.error('Error creating client:', error);
-        return res
-          .status(500)
-          .json({ ok: false, error: 'Failed to create client' });
+      if (insertErr) {
+        console.error('Error creating client:', insertErr);
+        return res.status(500).json({
+          ok: false,
+          error: insertErr.message || 'Failed to create client',
+          code: (insertErr as any).code,
+          details: (insertErr as any).details,
+          hint: (insertErr as any).hint,
+        });
       }
 
-      return res.status(201).json({ ok: true, client: data });
-    } catch (err) {
+      // Optional: link the creating authed user to this client (default true)
+      const shouldLink =
+        linkUser === undefined ||
+        linkUser === null ||
+        linkUser === true ||
+        linkUser === 'true' ||
+        linkUser === 1 ||
+        linkUser === '1';
+
+      if (shouldLink) {
+        const user = await getAuthedUser(req);
+
+        // Only link if there is an authed user (keeps website anonymous calls safe)
+        if (user?.id) {
+          const { error: linkErr } = await supabaseAdmin
+            .from('client_users')
+            .insert({ user_id: user.id, client_id: newClientId });
+
+          if (linkErr) {
+            console.error('Error linking user to client:', linkErr);
+            // Don't fail creation — return warning so UI can show it
+            return res.status(201).json({
+              ok: true,
+              client,
+              warning:
+                'Client created, but failed to link user to client (client_users insert failed).',
+              linkError: {
+                message: linkErr.message,
+                code: linkErr.code,
+                details: linkErr.details,
+                hint: linkErr.hint,
+              },
+            });
+          }
+        }
+      }
+
+      return res.status(201).json({ ok: true, client });
+    } catch (err: any) {
       console.error('Unexpected error creating client:', err);
-      return res
-        .status(500)
-        .json({ ok: false, error: 'Unexpected server error' });
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || 'Unexpected server error',
+      });
     }
   }
 
   // -------------------------
   // PUT /api/clients (update)
   // PATCH /api/clients (partial update)
-  // NOTE: owner_email removed from allowed fields (DB column missing)
   // -------------------------
   if (req.method === 'PUT' || req.method === 'PATCH') {
     try {
@@ -192,10 +242,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, ...rest } = body;
 
       if (!id) {
-        return res.status(400).json({
-          ok: false,
-          error: 'id is required to update a client',
-        });
+        return res
+          .status(400)
+          .json({ ok: false, error: 'id is required to update a client' });
       }
 
       const allowedFields = [
@@ -215,16 +264,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (rest[key] !== undefined) updates[key] = rest[key];
       }
 
-      // normalize boolean if present
-      if (updates.auto_review_enabled !== undefined) {
-        updates.auto_review_enabled = asBool(updates.auto_review_enabled);
-      }
-
       if (Object.keys(updates).length === 0) {
-        return res.status(400).json({
-          ok: false,
-          error: 'No updatable fields provided',
-        });
+        return res
+          .status(400)
+          .json({ ok: false, error: 'No updatable fields provided' });
       }
 
       const { data, error } = await supabaseAdmin
@@ -262,6 +305,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .status(400)
           .json({ ok: false, error: 'id is required to delete a client' });
       }
+
+      // optional: cleanup links (safe)
+      await supabaseAdmin.from('client_users').delete().eq('client_id', id);
 
       const { data, error } = await supabaseAdmin
         .from('clients')
