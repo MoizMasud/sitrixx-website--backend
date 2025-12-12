@@ -1,38 +1,53 @@
 // api/admin/create-user.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../supabaseAdmin';
-import { applyCors } from '../api/_cors'; // ✅ if path fails, change to "../_cors"
+import { applyCors } from '../api/_cors'; // adjust if your path is different
 
 function getBearerToken(req: VercelRequest) {
   const authHeader = req.headers.authorization || '';
-  return authHeader.replace('Bearer ', '').trim();
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.slice('Bearer '.length).trim()
+    : '';
+  return token;
 }
 
-function isAuthorized(req: VercelRequest) {
-  const token = getBearerToken(req);
-  return !!token && !!process.env.ADMIN_API_KEY && token === process.env.ADMIN_API_KEY;
+function isAdminUser(user: any) {
+  const roleFromAppMeta = user?.app_metadata?.role;
+  const roleFromUserMeta = user?.user_metadata?.role;
+  return roleFromAppMeta === 'admin' || roleFromUserMeta === 'admin';
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS first (handles OPTIONS and returns true)
+  // CORS first
   if (applyCors(req, res)) return;
 
-  // Safety: allow OPTIONS to exit cleanly even if applyCors changes later
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  // Always allow OPTIONS
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Only allow POST
+  // Only POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
 
-  // Admin guard (do NOT run this on OPTIONS)
-  if (!isAuthorized(req)) {
-    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  // Verify Supabase session token
+  const accessToken = getBearerToken(req);
+  if (!accessToken) {
+    return res.status(401).json({ ok: false, error: 'Missing Authorization token' });
   }
 
+  const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(accessToken);
+
+  if (userErr || !userData?.user) {
+    return res.status(401).json({ ok: false, error: 'Invalid or expired session' });
+  }
+
+  // Admin check
+  if (!isAdminUser(userData.user)) {
+    return res.status(403).json({ ok: false, error: 'Forbidden (admin only)' });
+  }
+
+  // Create user
   try {
     const { email, password, display_name, phone } = (req.body as any) || {};
 
