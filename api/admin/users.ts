@@ -88,109 +88,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ===============================
     // POST — create user + profile + optional link to client
     // ===============================
-    if (req.method === 'POST') {
-      const {
-        email,
-        password, // optional: if omitted, temp password used
-        role = 'client',
-        clientId, // optional but recommended: link user to a business
-        display_name,
-        phone,
-      } = (req.body as any) || {};
+  if (req.method === 'POST') {
+  const { email, password, role = 'client', clientId } = req.body || {};
 
-      if (!email) {
-        return res.status(400).json({ ok: false, error: 'Email required' });
-      }
+  if (!email) {
+    return res.status(400).json({ ok: false, error: 'Email required' });
+  }
 
-      if (clientId !== undefined && clientId !== null && !isValidUUID(clientId)) {
-        return res.status(400).json({ ok: false, error: 'clientId must be a UUID' });
-      }
+  if (!password || String(password).trim().length < 8) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Password required (min 8 characters)',
+    });
+  }
 
-      const finalPassword =
-        typeof password === 'string' && password.trim().length >= 8
-          ? password.trim()
-          : makeTempPassword();
+  const { data: createdUser, error: createError } =
+    await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: String(password).trim(),
+      email_confirm: true,
+    });
 
-      // 1) Create auth user
-      const { data: created, error: createError } =
-        await supabaseAdmin.auth.admin.createUser({
-          email,
-          password: finalPassword,
-          email_confirm: true,
-        });
+  if (createError || !createdUser.user) {
+    console.error('createUser error:', createError);
+    return res.status(500).json({
+      ok: false,
+      error: createError?.message || 'Failed to create user',
+    });
+  }
 
-      if (createError || !created?.user) {
-        // Make it obvious what happened
-        const msg = createError?.message || 'Failed to create auth user';
-        console.error('auth.admin.createUser failed:', createError);
-        // Common: "User already registered"
-        if (msg.toLowerCase().includes('already')) {
-          return res.status(409).json({
-            ok: false,
-            error: 'User already exists',
-          });
-        }
-        return res.status(500).json({
-          ok: false,
-          error: msg,
-        });
-      }
+  // Create / upsert profile
+  const { error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .upsert({
+      id: createdUser.user.id,
+      email,
+      role,
+      needs_password_change: false,
+    });
 
-      const newUserId = created.user.id;
+  if (profileError) {
+    console.error('profileError:', profileError);
+    return res.status(500).json({
+      ok: false,
+      error: profileError.message || 'Failed to create profile',
+    });
+  }
 
-      // 2) Create profile row
-      const { error: profileError } = await supabaseAdmin.from('profiles').insert({
-        id: newUserId,
-        email,
-        role: role as Role,
-        display_name: display_name ?? null,
-        phone: phone ?? null,
-        needs_password_change: !password, // if admin didn't supply password, force change
-      });
+  // OPTIONAL: link to client if provided
+  if (clientId) {
+    const { error: linkErr } = await supabaseAdmin
+      .from('client_users')
+      .insert({ user_id: createdUser.user.id, client_id: clientId });
 
-      if (profileError) {
-        console.error('profiles insert failed:', profileError);
-
-        // cleanup: remove auth user to avoid half-created accounts
-        try {
-          await supabaseAdmin.auth.admin.deleteUser(newUserId);
-        } catch (cleanupErr) {
-          console.error('cleanup deleteUser failed:', cleanupErr);
-        }
-
-        return res.status(500).json({
-          ok: false,
-          error: profileError.message || 'Failed to create profile',
-        });
-      }
-
-      // 3) Link to client (optional but usually needed)
-      if (clientId) {
-        const { error: linkErr } = await supabaseAdmin.from('client_users').insert({
-          user_id: newUserId,
-          client_id: clientId,
-        });
-
-        if (linkErr) {
-          console.error('client_users insert failed:', linkErr);
-
-          // Keep the user but tell UI link failed (admin can retry)
-          return res.status(201).json({
-            ok: true,
-            userId: newUserId,
-            tempPassword: password ? undefined : finalPassword,
-            warning: 'User created but failed to link user to client',
-          });
-        }
-      }
-
-      // If admin didn't provide password, return temp so you can share it once
+    if (linkErr) {
+      console.error('linkErr:', linkErr);
+      // don’t fail the whole thing
       return res.status(201).json({
         ok: true,
-        userId: newUserId,
-        tempPassword: password ? undefined : finalPassword,
+        userId: createdUser.user.id,
+        warning: 'User created but failed to link user to client',
       });
     }
+  }
+
+  return res.status(201).json({
+    ok: true,
+    userId: createdUser.user.id,
+  });
+}
 
     // ===============================
     // PATCH — update user profile
