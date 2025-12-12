@@ -1,7 +1,8 @@
 // api/admin/create-user.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supabaseAdmin } from '../supabaseAdmin';
+import { supabaseAdmin } from '../../supabaseAdmin';
 import { applyCors } from '../_cors';
+
 
 function getBearerToken(req: VercelRequest) {
   const authHeader = req.headers.authorization || '';
