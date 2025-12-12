@@ -86,9 +86,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ===============================
-    // POST — create user + profile + optional link to client
-    // ===============================
-  if (req.method === 'POST') {
+// POST — create user
+// ===============================
+if (req.method === 'POST') {
   const { email, password, role = 'client', clientId } = req.body || {};
 
   if (!email) {
@@ -117,14 +117,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // Create / upsert profile
+  // Create profile (force password change on first login)
   const { error: profileError } = await supabaseAdmin
     .from('profiles')
-    .upsert({
+    .insert({
       id: createdUser.user.id,
       email,
       role,
-      needs_password_change: false,
+      needs_password_change: true,
     });
 
   if (profileError) {
@@ -135,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // OPTIONAL: link to client if provided
+  // Link user to client (so mobile "mine" works)
   if (clientId) {
     const { error: linkErr } = await supabaseAdmin
       .from('client_users')
@@ -143,7 +143,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (linkErr) {
       console.error('linkErr:', linkErr);
-      // don’t fail the whole thing
       return res.status(201).json({
         ok: true,
         userId: createdUser.user.id,
@@ -157,6 +156,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     userId: createdUser.user.id,
   });
 }
+
 
     // ===============================
     // PATCH — update user profile
