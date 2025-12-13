@@ -1,4 +1,3 @@
-
 // api/admin/users.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
@@ -45,8 +44,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ===============================
     // GET — list users
+    // Optional: ?clientId=<uuid> -> users assigned to that client
     // ===============================
     if (req.method === 'GET') {
+      const clientId =
+        typeof req.query.clientId === 'string' ? req.query.clientId : null;
+
+      // If clientId is provided, return users for that client via client_users join
+      if (clientId) {
+        const { data, error } = await supabaseAdmin
+          .from('client_users')
+          .select(
+            `
+            user_id,
+            client_id,
+            profiles:profiles(
+              id,
+              email,
+              display_name,
+              phone,
+              role,
+              needs_password_change,
+              created_at
+            )
+          `,
+          )
+          .eq('client_id', clientId);
+
+        if (error) {
+          console.error('Error listing users for client:', error);
+          return res
+            .status(500)
+            .json({ ok: false, error: 'Failed to load users' });
+        }
+
+        // Return only the profile objects (what the mobile UI wants)
+        return res.status(200).json({
+          ok: true,
+          users: (data || [])
+            .map((r: any) => r.profiles)
+            .filter(Boolean),
+        });
+      }
+
+      // Default: list all users (profiles)
       const { data: profiles, error } = await supabaseAdmin
         .from('profiles')
         .select(
@@ -224,6 +265,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+
 
 
 
