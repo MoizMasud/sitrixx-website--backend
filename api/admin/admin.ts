@@ -1,7 +1,7 @@
 // /api/admin.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supabaseAdmin } from '../supabaseAdmin';
-import { applyCors } from './_cors';
+import { supabaseAdmin } from '../../supabaseAdmin';
+import { applyCors } from '../_cors';
 
 type AdminAction =
   | 'listClients'
