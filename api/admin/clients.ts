@@ -1,115 +1,116 @@
-// api/admin/clients.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { supabaseAdmin } from '../../supabaseAdmin';
-import { applyCors } from '../_cors';
+import React, { useState } from 'react';
+import { View, Text, TextInput, Pressable, Alert, ActivityIndicator } from 'react-native';
+import { useClientApi, ClientInfo } from '../../api/clientApi';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (applyCors(req, res)) return;
+export default function AdminUserEditScreen({ route, navigation }: any) {
+  const { adminUsersApi } = useClientApi();
 
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ ok: false, error: 'Missing auth header' });
-    }
+  const client: ClientInfo | undefined = route.params?.client;
+  const user = route.params?.user;
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } =
-      await supabaseAdmin.auth.getUser(token);
+  const [display_name, setDisplayName] = useState(user?.display_name || '');
+  const [phone, setPhone] = useState(user?.phone || '');
+  const [role, setRole] = useState<'client' | 'admin'>(user?.role === 'admin' ? 'admin' : 'client');
+  const [saving, setSaving] = useState(false);
 
-    if (authError || !user) {
-      return res.status(401).json({ ok: false, error: 'Invalid token' });
-    }
-
-    // 🔐 Admin check
-    const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    if (profile?.role !== 'admin') {
-      return res.status(403).json({ ok: false, error: 'Admin only' });
-    }
-
-    // ===============================
-    // GET — list all clients
-    // ===============================
-    if (req.method === 'GET') {
-      const { data, error } = await supabaseAdmin
-        .from('clients')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return res.status(200).json({ ok: true, clients: data });
-    }
-
-    // ===============================
-    // POST — create client
-    // ===============================
-    if (req.method === 'POST') {
-      const {
-        business_name,
-        website_url,
-        booking_link,
-        google_review_link,
-        twilio_number,
-        forwarding_phone,
-        custom_sms_template,
-        review_sms_template,
-        auto_review_enabled,
-      } = req.body || {};
-
-      if (!business_name) {
-        return res.status(400).json({ ok: false, error: 'business_name required' });
+  const save = async () => {
+    try {
+      if (!user?.id) {
+        Alert.alert('Error', 'Missing user id');
+        return;
       }
+      setSaving(true);
 
-      const { data, error } = await supabaseAdmin
-        .from('clients')
-        .insert({
-          business_name,
-          website_url,
-          booking_link,
-          google_review_link,
-          twilio_number,
-          forwarding_phone,
-          custom_sms_template,
-          review_sms_template,
-          auto_review_enabled: !!auto_review_enabled,
-        })
-        .select('*')
-        .single();
+      const body = await adminUsersApi('PATCH', {
+        userId: user.id,
+        display_name: display_name || null,
+        phone: phone || null,
+        role,
+      });
 
-      if (error) throw error;
-      return res.status(201).json({ ok: true, client: data });
+      if (!body?.ok) throw new Error(body?.error || 'Failed to update user');
+
+      Alert.alert('Saved', 'User updated.');
+      navigation.goBack();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSaving(false);
     }
+  };
 
-    // ===============================
-    // PATCH — update client
-    // ===============================
-    if (req.method === 'PATCH') {
-      const { id, ...updates } = req.body || {};
-      if (!id) {
-        return res.status(400).json({ ok: false, error: 'Client id required' });
-      }
+  return (
+    <View style={{ padding: 16, gap: 12 }}>
+      <Text style={{ fontSize: 20, fontWeight: '800' }}>Edit user</Text>
+      <Text style={{ opacity: 0.7 }}>
+        Business: <Text style={{ fontWeight: '700' }}>{client?.business_name || '—'}</Text>
+      </Text>
 
-      const { data, error } = await supabaseAdmin
-        .from('clients')
-        .update(updates)
-        .eq('id', id)
-        .select('*')
-        .single();
+      <View style={{ padding: 12, borderWidth: 1, borderRadius: 12 }}>
+        <Text style={{ fontWeight: '900' }}>{user?.email}</Text>
+        <Text style={{ opacity: 0.7, marginTop: 4 }}>id: {user?.id}</Text>
+      </View>
 
-      if (error) throw error;
-      return res.status(200).json({ ok: true, client: data });
-    }
+      <Text style={{ fontWeight: '700' }}>Name</Text>
+      <TextInput
+        value={display_name}
+        onChangeText={setDisplayName}
+        placeholder="Full name"
+        style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}
+      />
 
-    return res.status(405).json({ ok: false, error: 'Method not allowed' });
-  } catch (err: any) {
-    console.error('admin/clients error:', err);
-    return res.status(500).json({
-      ok: false,
-      error: err?.message || 'Internal server error',
-    });
-  }
+      <Text style={{ fontWeight: '700' }}>Phone</Text>
+      <TextInput
+        value={phone}
+        onChangeText={setPhone}
+        placeholder="+15195551234"
+        keyboardType="phone-pad"
+        style={{ borderWidth: 1, borderRadius: 12, padding: 12 }}
+      />
+
+      <Text style={{ fontWeight: '700' }}>Role</Text>
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <Pressable
+          onPress={() => setRole('client')}
+          style={{
+            flex: 1,
+            padding: 12,
+            borderWidth: 1,
+            borderRadius: 12,
+            opacity: role === 'client' ? 1 : 0.6,
+          }}
+        >
+          <Text style={{ textAlign: 'center', fontWeight: '800' }}>Client</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setRole('admin')}
+          style={{
+            flex: 1,
+            padding: 12,
+            borderWidth: 1,
+            borderRadius: 12,
+            opacity: role === 'admin' ? 1 : 0.6,
+          }}
+        >
+          <Text style={{ textAlign: 'center', fontWeight: '800' }}>Admin</Text>
+        </Pressable>
+      </View>
+
+      <Pressable
+        onPress={save}
+        disabled={saving}
+        style={{
+          marginTop: 8,
+          padding: 14,
+          borderRadius: 999,
+          backgroundColor: saving ? '#9CA3AF' : '#7C3AED',
+          alignItems: 'center',
+        }}
+      >
+        {saving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900' }}>Save</Text>}
+      </Pressable>
+    </View>
+  );
 }
+
