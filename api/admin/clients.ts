@@ -100,8 +100,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ ok: false, error: 'business_name required' });
       }
 
-      // ✅ IMPORTANT: generate id in API (fixes "null value in column id" issues)
       const newId = crypto.randomUUID();
+
+      const autoReviewEnabled =
+        typeof auto_review_enabled === 'boolean' ? auto_review_enabled : false;
 
       const insertPayload = {
         id: newId,
@@ -112,7 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         forwarding_phone: forwarding_phone ?? null,
         custom_sms_template: custom_sms_template ?? null,
         review_sms_template: review_sms_template ?? null,
-        auto_review_enabled: typeof auto_review_enabled === 'boolean' ? auto_review_enabled : null,
+        auto_review_enabled: autoReviewEnabled,
       };
 
       console.log('[admin/clients] create payload', insertPayload);
@@ -128,7 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({
           ok: false,
           error: 'Failed to create client',
-          details: error.message, // 👈 shows the real reason
+          details: error.message,
         });
       }
 
@@ -146,8 +148,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, ...updates } = req.body || {};
       if (!id) return res.status(400).json({ ok: false, error: 'Client id required' });
 
-      const updatePayload = { ...updates, updated_at: new Date().toISOString() };
+      // ✅ Do not overwrite auto_review_enabled unless it's explicitly boolean
+      const updatePayload: any = { ...updates };
+      if (typeof updates.auto_review_enabled !== 'boolean') {
+        delete updatePayload.auto_review_enabled;
+      }
 
+      // ✅ IMPORTANT: DO NOT write updated_at (column doesn't exist)
       console.log('[admin/clients] update', { id, updatePayload });
 
       const { data, error } = await supabaseAdmin
@@ -210,4 +217,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
-
