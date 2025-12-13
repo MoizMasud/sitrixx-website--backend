@@ -1,5 +1,6 @@
 // api/admin/clients.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import crypto from 'crypto';
 import { supabaseAdmin } from '../../supabaseAdmin';
 import { applyCors } from '../_cors';
 
@@ -33,7 +34,7 @@ async function requireAdmin(req: VercelRequest, res: VercelResponse) {
     .single();
 
   if (adminProfileErr) {
-    console.error('[admin/clients] Error fetching admin profile:', adminProfileErr);
+    console.error('[admin/clients] profile check error:', adminProfileErr);
     res.status(500).json({ ok: false, error: 'Failed to verify admin role' });
     return null;
   }
@@ -50,11 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
 
   try {
-    console.log('[admin/clients] HIT', {
-      method: req.method,
-      url: req.url,
-      query: req.query,
-    });
+    console.log('[admin/clients] HIT', { method: req.method, url: req.url });
 
     const admin = await requireAdmin(req, res);
     if (!admin) return;
@@ -69,13 +66,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('[admin/clients] Error listing clients:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to load clients' });
+        console.error('[admin/clients] list error:', error);
+        return res.status(500).json({
+          ok: false,
+          error: 'Failed to load clients',
+          details: error.message,
+        });
       }
 
-      console.log('[admin/clients] returning clients count:', (data || []).length);
-
-      // ✅ ROUTE MARKER: this proves which lambda is responding
       return res.status(200).json({
         ok: true,
         route: 'admin/clients',
@@ -98,28 +96,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         auto_review_enabled,
       } = req.body || {};
 
-      if (!business_name) {
+      if (!business_name || !String(business_name).trim()) {
         return res.status(400).json({ ok: false, error: 'business_name required' });
       }
 
+      // ✅ IMPORTANT: generate id in API (fixes "null value in column id" issues)
+      const newId = crypto.randomUUID();
+
+      const insertPayload = {
+        id: newId,
+        business_name: String(business_name).trim(),
+        website_url: website_url ?? null,
+        booking_link: booking_link ?? null,
+        google_review_link: google_review_link ?? null,
+        forwarding_phone: forwarding_phone ?? null,
+        custom_sms_template: custom_sms_template ?? null,
+        review_sms_template: review_sms_template ?? null,
+        auto_review_enabled: typeof auto_review_enabled === 'boolean' ? auto_review_enabled : null,
+      };
+
+      console.log('[admin/clients] create payload', insertPayload);
+
       const { data, error } = await supabaseAdmin
         .from('clients')
-        .insert({
-          business_name,
-          website_url: website_url ?? null,
-          booking_link: booking_link ?? null,
-          google_review_link: google_review_link ?? null,
-          forwarding_phone: forwarding_phone ?? null,
-          custom_sms_template: custom_sms_template ?? null,
-          review_sms_template: review_sms_template ?? null,
-          auto_review_enabled: typeof auto_review_enabled === 'boolean' ? auto_review_enabled : null,
-        })
+        .insert(insertPayload)
         .select('*')
         .single();
 
       if (error) {
-        console.error('[admin/clients] Error creating client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to create client' });
+        console.error('[admin/clients] create error:', error);
+        return res.status(500).json({
+          ok: false,
+          error: 'Failed to create client',
+          details: error.message, // 👈 shows the real reason
+        });
       }
 
       return res.status(201).json({
@@ -136,16 +146,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id, ...updates } = req.body || {};
       if (!id) return res.status(400).json({ ok: false, error: 'Client id required' });
 
+      const updatePayload = { ...updates, updated_at: new Date().toISOString() };
+
+      console.log('[admin/clients] update', { id, updatePayload });
+
       const { data, error } = await supabaseAdmin
         .from('clients')
-        .update({ ...updates, updated_at: new Date().toISOString() })
+        .update(updatePayload)
         .eq('id', id)
         .select('*')
         .single();
 
       if (error) {
-        console.error('[admin/clients] Error updating client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to update client' });
+        console.error('[admin/clients] update error:', error);
+        return res.status(500).json({
+          ok: false,
+          error: 'Failed to update client',
+          details: error.message,
+        });
       }
 
       return res.status(200).json({
@@ -162,6 +180,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { id } = req.body || {};
       if (!id) return res.status(400).json({ ok: false, error: 'Client id required' });
 
+      console.log('[admin/clients] delete', { id });
+
       await supabaseAdmin.from('client_users').delete().eq('client_id', id);
       await supabaseAdmin.from('customer_contacts').delete().eq('client_id', id);
       await supabaseAdmin.from('leads').delete().eq('client_id', id);
@@ -169,8 +189,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const { error } = await supabaseAdmin.from('clients').delete().eq('id', id);
       if (error) {
-        console.error('[admin/clients] Error deleting client:', error);
-        return res.status(500).json({ ok: false, error: 'Failed to delete client' });
+        console.error('[admin/clients] delete error:', error);
+        return res.status(500).json({
+          ok: false,
+          error: 'Failed to delete client',
+          details: error.message,
+        });
       }
 
       return res.status(200).json({ ok: true, route: 'admin/clients' });
@@ -186,3 +210,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+
