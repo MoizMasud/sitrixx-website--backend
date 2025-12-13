@@ -1,269 +1,188 @@
-// api/admin/users.ts
+// api/admin/clients.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
 import { applyCors } from '../_cors';
 
-/**
- * Helper: load users linked to a specific client (business)
- * Uses 2 queries (NO JOIN) to avoid PostgREST relationship issues.
- */
-async function getUsersForClient(clientId: string) {
-  // 1) Fetch linked user IDs
-  const { data: links, error: linksErr } = await supabaseAdmin
-    .from('client_users')
-    .select('user_id')
-    .eq('client_id', clientId);
+function getBearerToken(req: VercelRequest): string | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return null;
+  return authHeader.replace('Bearer ', '').trim() || null;
+}
 
-  if (linksErr) {
-    throw linksErr;
+async function requireAdmin(req: VercelRequest, res: VercelResponse) {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ ok: false, error: 'Missing auth header' });
+    return null;
   }
 
-  const userIds = (links || [])
-    .map((r: any) => r.user_id)
-    .filter(Boolean);
+  const {
+    data: { user },
+    error: authError,
+  } = await supabaseAdmin.auth.getUser(token);
 
-  if (userIds.length === 0) {
-    return [];
+  if (authError || !user) {
+    res.status(401).json({ ok: false, error: 'Invalid token' });
+    return null;
   }
 
-  // 2) Fetch user profiles
-  const { data: profiles, error: profilesErr } = await supabaseAdmin
+  const { data: adminProfile, error: adminProfileErr } = await supabaseAdmin
     .from('profiles')
-    .select(`
-      id,
-      email,
-      display_name,
-      phone,
-      role,
-      created_at,
-      needs_password_change
-    `)
-    .in('id', userIds)
-    .order('created_at', { ascending: false });
+    .select('role')
+    .eq('id', user.id)
+    .single();
 
-  if (profilesErr) {
-    throw profilesErr;
+  if (adminProfileErr) {
+    console.error('[admin/clients] Error fetching admin profile:', adminProfileErr);
+    res.status(500).json({ ok: false, error: 'Failed to verify admin role' });
+    return null;
   }
 
-  return profiles || [];
+  if (adminProfile?.role !== 'admin') {
+    res.status(403).json({ ok: false, error: 'Admin only' });
+    return null;
+  }
+
+  return { userId: user.id };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (applyCors(req, res)) return;
 
   try {
-    // ===============================
-    // 🔐 Auth
-    // ===============================
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ ok: false, error: 'Missing auth header' });
-    }
+    console.log('[admin/clients] HIT', {
+      method: req.method,
+      url: req.url,
+      query: req.query,
+    });
 
-    const token = authHeader.replace('Bearer ', '');
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (authError || !user) {
-      return res.status(401).json({ ok: false, error: 'Invalid token' });
-    }
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
 
     // ===============================
-    // 🔐 Admin role check
-    // ===============================
-    const { data: adminProfile, error: adminProfileErr } = await supabaseAdmin
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    if (adminProfileErr) {
-      console.error('Error fetching admin profile:', adminProfileErr);
-      return res
-        .status(500)
-        .json({ ok: false, error: 'Failed to verify admin role' });
-    }
-
-    if (adminProfile?.role !== 'admin') {
-      return res.status(403).json({ ok: false, error: 'Admin only' });
-    }
-
-    // ===============================
-    // GET — list users
-    // Optional: ?clientId=xxx
+    // GET — list clients
     // ===============================
     if (req.method === 'GET') {
-      const clientId =
-        typeof req.query.clientId === 'string' ? req.query.clientId : null;
-
-      // ✅ Client-specific users (isolated logic)
-      if (clientId) {
-        try {
-          const users = await getUsersForClient(clientId);
-          return res.status(200).json({ ok: true, users });
-        } catch (err) {
-          console.error('getUsersForClient failed:', err);
-          return res
-            .status(500)
-            .json({ ok: false, error: 'Failed to load users' });
-        }
-      }
-
-      // ✅ Default behavior (UNCHANGED)
-      const { data: profiles, error } = await supabaseAdmin
-        .from('profiles')
-        .select(`
-          id,
-          email,
-          display_name,
-          phone,
-          role,
-          created_at,
-          needs_password_change
-        `)
+      const { data, error } = await supabaseAdmin
+        .from('clients')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error listing users:', error);
-        return res
-          .status(500)
-          .json({ ok: false, error: 'Failed to load users' });
+        console.error('[admin/clients] Error listing clients:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to load clients' });
       }
 
-      return res.status(200).json({ ok: true, users: profiles });
-    }
+      console.log('[admin/clients] returning clients count:', (data || []).length);
 
-    // ===============================
-    // POST — create user
-    // ===============================
-    if (req.method === 'POST') {
-      const { email, role = 'client', clientId, tempPassword } = req.body || {};
-
-      if (!email) {
-        return res.status(400).json({ ok: false, error: 'Email required' });
-      }
-
-      const generatedTemp = Math.random().toString(36).slice(-10);
-      const finalTempPassword =
-        typeof tempPassword === 'string' && tempPassword.length >= 8
-          ? tempPassword
-          : generatedTemp;
-
-      const { data: createdUser, error: createError } =
-        await supabaseAdmin.auth.admin.createUser({
-          email,
-          password: finalTempPassword,
-          email_confirm: true,
-        });
-
-      if (createError || !createdUser?.user) {
-        console.error('createUser error:', createError);
-        return res.status(500).json({
-          ok: false,
-          error: createError?.message || 'Failed to create user',
-        });
-      }
-
-      const newUserId = createdUser.user.id;
-
-      const { error: profileError } = await supabaseAdmin.from('profiles').upsert(
-        {
-          id: newUserId,
-          email,
-          role,
-          needs_password_change: true,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' },
-      );
-
-      if (profileError) {
-        console.error('profile upsert error:', profileError);
-        return res
-          .status(500)
-          .json({ ok: false, error: 'Failed to create profile' });
-      }
-
-      if (clientId) {
-        const { error: linkError } = await supabaseAdmin
-          .from('client_users')
-          .upsert(
-            { user_id: newUserId, client_id: clientId },
-            { onConflict: 'user_id,client_id' },
-          );
-
-        if (linkError) {
-          console.error('client_users upsert error:', linkError);
-          return res
-            .status(500)
-            .json({ ok: false, error: 'Failed to link user to client' });
-        }
-      }
-
-      return res.status(201).json({
+      // ✅ ROUTE MARKER: this proves which lambda is responding
+      return res.status(200).json({
         ok: true,
-        userId: newUserId,
-        tempPassword: finalTempPassword,
-        linkedClientId: clientId || null,
+        route: 'admin/clients',
+        clients: data || [],
       });
     }
 
     // ===============================
-    // PATCH — update user
+    // POST — create client
     // ===============================
-    if (req.method === 'PATCH') {
-      const { userId, display_name, phone } = req.body || {};
+    if (req.method === 'POST') {
+      const {
+        business_name,
+        website_url,
+        booking_link,
+        google_review_link,
+        forwarding_phone,
+        custom_sms_template,
+        review_sms_template,
+        auto_review_enabled,
+      } = req.body || {};
 
-      if (!userId) {
-        return res.status(400).json({ ok: false, error: 'userId required' });
+      if (!business_name) {
+        return res.status(400).json({ ok: false, error: 'business_name required' });
       }
 
-      const { error } = await supabaseAdmin
-        .from('profiles')
-        .update({
-          display_name,
-          phone,
-          updated_at: new Date().toISOString(),
+      const { data, error } = await supabaseAdmin
+        .from('clients')
+        .insert({
+          business_name,
+          website_url: website_url ?? null,
+          booking_link: booking_link ?? null,
+          google_review_link: google_review_link ?? null,
+          forwarding_phone: forwarding_phone ?? null,
+          custom_sms_template: custom_sms_template ?? null,
+          review_sms_template: review_sms_template ?? null,
+          auto_review_enabled: typeof auto_review_enabled === 'boolean' ? auto_review_enabled : null,
         })
-        .eq('id', userId);
+        .select('*')
+        .single();
 
       if (error) {
-        console.error('Error updating user:', error);
-        return res
-          .status(500)
-          .json({ ok: false, error: 'Failed to update user' });
+        console.error('[admin/clients] Error creating client:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to create client' });
       }
 
-      return res.status(200).json({ ok: true });
+      return res.status(201).json({
+        ok: true,
+        route: 'admin/clients',
+        client: data,
+      });
     }
 
     // ===============================
-    // DELETE — delete user
+    // PATCH — update client
+    // ===============================
+    if (req.method === 'PATCH') {
+      const { id, ...updates } = req.body || {};
+      if (!id) return res.status(400).json({ ok: false, error: 'Client id required' });
+
+      const { data, error } = await supabaseAdmin
+        .from('clients')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        console.error('[admin/clients] Error updating client:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to update client' });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        route: 'admin/clients',
+        client: data,
+      });
+    }
+
+    // ===============================
+    // DELETE — delete client (and related rows)
     // ===============================
     if (req.method === 'DELETE') {
-      const { userId } = req.body || {};
+      const { id } = req.body || {};
+      if (!id) return res.status(400).json({ ok: false, error: 'Client id required' });
 
-      if (!userId) {
-        return res.status(400).json({ ok: false, error: 'userId required' });
+      await supabaseAdmin.from('client_users').delete().eq('client_id', id);
+      await supabaseAdmin.from('customer_contacts').delete().eq('client_id', id);
+      await supabaseAdmin.from('leads').delete().eq('client_id', id);
+      await supabaseAdmin.from('reviews').delete().eq('client_id', id);
+
+      const { error } = await supabaseAdmin.from('clients').delete().eq('id', id);
+      if (error) {
+        console.error('[admin/clients] Error deleting client:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to delete client' });
       }
 
-      await supabaseAdmin.from('client_users').delete().eq('user_id', userId);
-      await supabaseAdmin.from('profiles').delete().eq('id', userId);
-      await supabaseAdmin.auth.admin.deleteUser(userId);
-
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, route: 'admin/clients' });
     }
 
-    return res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return res.status(405).json({ ok: false, error: 'Method not allowed', route: 'admin/clients' });
   } catch (err: any) {
-    console.error('admin/users error:', err);
+    console.error('[admin/clients] crash', err);
     return res.status(500).json({
       ok: false,
       error: err?.message || 'Internal server error',
+      route: 'admin/clients',
     });
   }
 }
-
-
