@@ -3,52 +3,77 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { supabaseAdmin } from '../../supabaseAdmin';
 import { applyCors } from '../_cors';
 
+type AuthedAdmin = { id: string };
+
+function getBearerToken(req: VercelRequest): string | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return null;
+  return authHeader.replace('Bearer ', '').trim() || null;
+}
+
+async function requireAdmin(req: VercelRequest, res: VercelResponse): Promise<AuthedAdmin | null> {
+  const token = getBearerToken(req);
+  if (!token) {
+    res.status(401).json({ ok: false, error: 'Missing auth header' });
+    return null;
+  }
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabaseAdmin.auth.getUser(token);
+
+  if (authError || !user) {
+    res.status(401).json({ ok: false, error: 'Invalid token' });
+    return null;
+  }
+
+  const { data: adminProfile, error: adminProfileErr } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  if (adminProfileErr) {
+    console.error('Error fetching admin profile:', adminProfileErr);
+    res.status(500).json({ ok: false, error: 'Failed to verify admin role' });
+    return null;
+  }
+
+  if (adminProfile?.role !== 'admin') {
+    res.status(403).json({ ok: false, error: 'Admin only' });
+    return null;
+  }
+
+  return { id: user.id };
+}
+
+function normalizeEmail(email: any): string | null {
+  if (typeof email !== 'string') return null;
+  const e = email.trim().toLowerCase();
+  return e.length ? e : null;
+}
+
+function safeString(v: any): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s.length ? s : null;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS (handles OPTIONS too)
   if (applyCors(req, res)) return;
 
   try {
-    // 🔐 Verify auth
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ ok: false, error: 'Missing auth header' });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (authError || !user) {
-      return res.status(401).json({ ok: false, error: 'Invalid token' });
-    }
-
-    // 🔐 Check admin role
-    const { data: adminProfile, error: adminProfileErr } = await supabaseAdmin
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    if (adminProfileErr) {
-      console.error('Error fetching admin profile:', adminProfileErr);
-      return res
-        .status(500)
-        .json({ ok: false, error: 'Failed to verify admin role' });
-    }
-
-    if (adminProfile?.role !== 'admin') {
-      return res.status(403).json({ ok: false, error: 'Admin only' });
-    }
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
 
     // ===============================
     // GET — list users
     // Optional: ?clientId=<uuid> -> users assigned to that client
     // ===============================
     if (req.method === 'GET') {
-      const clientId =
-        typeof req.query.clientId === 'string' ? req.query.clientId : null;
+      const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : null;
 
       // If clientId is provided, return users for that client via client_users join
       if (clientId) {
@@ -72,19 +97,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('client_id', clientId);
 
         if (error) {
-          console.error('Error listing users for client:', error);
-          return res
-            .status(500)
-            .json({ ok: false, error: 'Failed to load users' });
+          console.error('Error listing users for client:', { clientId, error });
+          return res.status(500).json({ ok: false, error: 'Failed to load users' });
         }
 
-        // Return only the profile objects (what the mobile UI wants)
-        return res.status(200).json({
-          ok: true,
-          users: (data || [])
-            .map((r: any) => r.profiles)
-            .filter(Boolean),
-        });
+        const users = (data || [])
+          .map((r: any) => r.profiles)
+          .filter(Boolean)
+          // optional: newest first if created_at exists
+          .sort((a: any, b: any) => {
+            const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+            const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+            return tb - ta;
+          });
+
+        return res.status(200).json({ ok: true, users });
       }
 
       // Default: list all users (profiles)
@@ -105,24 +132,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.error('Error listing users:', error);
-        return res
-          .status(500)
-          .json({ ok: false, error: 'Failed to load users' });
+        return res.status(500).json({ ok: false, error: 'Failed to load users' });
       }
 
-      return res.status(200).json({ ok: true, users: profiles });
+      return res.status(200).json({ ok: true, users: profiles || [] });
     }
 
     // ===============================
     // POST — create user
     // Body:
     //  - email (required)
-    //  - role (optional, default 'client')
-    //  - clientId (optional) -> will link in client_users for mobile "mine" queries
-    //  - tempPassword (optional) -> if not provided, we auto-generate
+    //  - role (optional, default 'client')  (you can keep backend support)
+    //  - clientId (optional) -> link in client_users
+    //  - tempPassword (optional) -> if not provided, auto-generate
     // ===============================
     if (req.method === 'POST') {
-      const { email, role = 'client', clientId, tempPassword } = req.body || {};
+      const rawEmail = req.body?.email;
+      const email = normalizeEmail(rawEmail);
+
+      // keep role support but clamp to known values
+      const roleRaw = safeString(req.body?.role) || 'client';
+      const role = roleRaw === 'admin' ? 'admin' : 'client';
+
+      const clientId = safeString(req.body?.clientId);
+      const tempPassword = safeString(req.body?.tempPassword);
 
       if (!email) {
         return res.status(400).json({ ok: false, error: 'Email required' });
@@ -130,18 +163,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Temporary password (min 8 chars)
       const generatedTemp = Math.random().toString(36).slice(-10);
-      const finalTempPassword =
-        typeof tempPassword === 'string' && tempPassword.length >= 8
-          ? tempPassword
-          : generatedTemp;
+      const finalTempPassword = tempPassword && tempPassword.length >= 8 ? tempPassword : generatedTemp;
 
       // 1) Create auth user
-      const { data: createdUser, error: createError } =
-        await supabaseAdmin.auth.admin.createUser({
-          email,
-          password: finalTempPassword,
-          email_confirm: true,
-        });
+      const { data: createdUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password: finalTempPassword,
+        email_confirm: true,
+      });
 
       if (createError || !createdUser?.user) {
         console.error('createUser error:', createError);
@@ -176,15 +205,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // 3) Optionally link user -> client (mobile app uses this to resolve "mine")
+      // 3) Optionally link user -> client
       if (clientId) {
-        // If you have a unique constraint on (user_id, client_id), upsert is safest
         const { error: linkError } = await supabaseAdmin
           .from('client_users')
-          .upsert(
-            { user_id: newUserId, client_id: clientId },
-            { onConflict: 'user_id,client_id' },
-          );
+          .upsert({ user_id: newUserId, client_id: clientId }, { onConflict: 'user_id,client_id' });
 
         if (linkError) {
           console.error('client_users upsert error:', linkError);
@@ -199,7 +224,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(201).json({
         ok: true,
         userId: newUserId,
-        tempPassword: finalTempPassword, // you can hide this later if you prefer
+        tempPassword: finalTempPassword,
         linkedClientId: clientId || null,
       });
     }
@@ -208,27 +233,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // PATCH — update user profile fields
     // ===============================
     if (req.method === 'PATCH') {
-      const { userId, display_name, phone, role } = req.body || {};
-
+      const userId = safeString(req.body?.userId);
       if (!userId) {
         return res.status(400).json({ ok: false, error: 'userId required' });
       }
 
-      const { error } = await supabaseAdmin
-        .from('profiles')
-        .update({
-          display_name,
-          phone,
-          role,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId);
+      const display_name = req.body?.display_name ?? undefined;
+      const phone = req.body?.phone ?? undefined;
+
+      // keep role supported, but optional
+      const roleRaw = req.body?.role;
+      const role = roleRaw === 'admin' ? 'admin' : roleRaw === 'client' ? 'client' : undefined;
+
+      const updatePayload: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (display_name !== undefined) updatePayload.display_name = display_name;
+      if (phone !== undefined) updatePayload.phone = phone;
+      if (role !== undefined) updatePayload.role = role;
+
+      const { error } = await supabaseAdmin.from('profiles').update(updatePayload).eq('id', userId);
 
       if (error) {
         console.error('Error updating user profile:', error);
-        return res
-          .status(500)
-          .json({ ok: false, error: 'Failed to update user' });
+        return res.status(500).json({ ok: false, error: 'Failed to update user' });
       }
 
       return res.status(200).json({ ok: true });
@@ -238,20 +266,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // DELETE — delete user
     // ===============================
     if (req.method === 'DELETE') {
-      const { userId } = req.body || {};
-
+      const userId = safeString(req.body?.userId);
       if (!userId) {
         return res.status(400).json({ ok: false, error: 'userId required' });
       }
 
       // Clean up linking rows first (avoid FK issues)
-      await supabaseAdmin.from('client_users').delete().eq('user_id', userId);
+      const { error: linkErr } = await supabaseAdmin.from('client_users').delete().eq('user_id', userId);
+      if (linkErr) console.warn('Warning deleting client_users links:', linkErr);
 
-      // Then delete profile row
-      await supabaseAdmin.from('profiles').delete().eq('id', userId);
+      const { error: profileErr } = await supabaseAdmin.from('profiles').delete().eq('id', userId);
+      if (profileErr) console.warn('Warning deleting profile:', profileErr);
 
-      // Then delete auth user
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      const { error: authDelErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
+      if (authDelErr) {
+        console.error('Error deleting auth user:', authDelErr);
+        return res.status(500).json({ ok: false, error: 'Failed to delete auth user' });
+      }
 
       return res.status(200).json({ ok: true });
     }
