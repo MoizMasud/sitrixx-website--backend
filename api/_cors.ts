@@ -7,6 +7,8 @@ function isAllowedOrigin(origin: string) {
   if (origin.endsWith('.webflow.com')) return true;
   if (origin === 'https://sitrixx.ca') return true;
   if (origin === 'https://www.sitrixx.ca') return true;
+  if (origin === 'https://sitrixx.com') return true;
+  if (origin === 'https://www.sitrixx.com') return true; 
   return false;
 }
 
